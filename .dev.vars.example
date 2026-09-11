@@ -1,0 +1,8 @@
+# Local secrets for `wrangler pages dev` (copy to .dev.vars, which is git-ignored).
+# In production set the same names with `wrangler pages secret put <NAME>`.
+# These are read only by the Pages Function in ./functions — never by the browser bundle.
+MINIMAX_API_KEY=
+# Optional. International endpoint (default); mainland China: https://api.minimaxi.com/v1
+MINIMAX_BASE_URL=https://api.minimax.io/v1
+# Optional. Any MiniMax chat model id, e.g. MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed
+MINIMAX_MODEL=MiniMax-M3
