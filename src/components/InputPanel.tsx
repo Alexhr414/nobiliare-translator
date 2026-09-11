@@ -1,10 +1,9 @@
 import { useCallback, useId, type KeyboardEvent } from 'react'
 import { CornerDownLeft, Eraser, LoaderCircle, RotateCcw, WandSparkles } from 'lucide-react'
+import { MAX_INPUT_LENGTH as MAX_INPUT } from '@/engine/api'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-
-const MAX_INPUT = 600
 
 const EXAMPLES: readonly string[] = [
   'Vattene, non ho tempo per te.',

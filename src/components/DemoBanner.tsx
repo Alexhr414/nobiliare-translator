@@ -1,28 +1,38 @@
-import { FlaskConical, TriangleAlert, X } from 'lucide-react'
+import { FlaskConical, KeyRound, TriangleAlert, X } from 'lucide-react'
+import type { LlmStatus } from '@/engine/api'
+import type { Fallback } from '@/engine/translate'
 import { Button } from '@/components/ui/button'
 
 interface DemoBannerProps {
-  llmEnabled: boolean
-  fallbackReason: string | null
+  /** `null` while the status probe is still in flight. */
+  status: LlmStatus | null
+  fallback: Fallback | null
   onDismissFallback: () => void
 }
 
-export function DemoBanner({ llmEnabled, fallbackReason, onDismissFallback }: DemoBannerProps) {
-  if (llmEnabled && !fallbackReason) return null
+const SECRET_HINT = (
+  <>
+    Per attivare MiniMax imposta il segreto{' '}
+    <code className="rounded bg-ink/8 px-1 py-0.5">wrangler pages secret put MINIMAX_API_KEY</code> sul progetto Cloudflare
+    Pages e ridistribuisci (vedi README).
+  </>
+)
 
-  if (fallbackReason) {
+export function DemoBanner({ status, fallback, onDismissFallback }: DemoBannerProps) {
+  if (fallback?.kind === 'failed') {
     return (
       <div
-        role="status"
+        role="alert"
         className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/8 px-4 py-3 text-sm text-ink"
       >
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
         <div className="flex-1 space-y-1">
           <p className="font-medium">
-            Il modello linguistico non ha risposto: risultato prodotto dal motore dimostrativo.
-            <span className="font-cjk text-ink-soft"> · 语言模型未响应，已改用演示引擎。</span>
+            MiniMax non ha risposto: il risultato qui sotto proviene dal motore dimostrativo offline.
+            <span className="font-cjk text-ink-soft"> · MiniMax 未响应，以下结果由离线演示引擎生成。</span>
           </p>
-          <p className="text-ink-soft font-mono text-xs break-all">{fallbackReason}</p>
+          <p className="text-ink-soft font-mono text-xs break-all">{fallback.message}</p>
+          <p className="text-ink-soft text-xs">Riprova con «Trasmuta» o «Rigenera» per interrogare di nuovo il modello.</p>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={onDismissFallback} aria-label="Chiudi avviso">
           <X />
@@ -30,6 +40,29 @@ export function DemoBanner({ llmEnabled, fallbackReason, onDismissFallback }: De
       </div>
     )
   }
+
+  if (fallback?.kind === 'unconfigured') {
+    return (
+      <div
+        role="status"
+        className="flex items-start gap-3 rounded-lg border border-gold/50 bg-gold-soft/30 px-4 py-3 text-sm text-ink"
+      >
+        <KeyRound className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
+        <div className="flex-1 space-y-1">
+          <p className="font-medium">
+            Chiave MiniMax assente sul server: il risultato proviene dal motore dimostrativo offline.
+            <span className="font-cjk text-ink-soft"> · 服务器未配置 MiniMax 密钥，以下结果由离线演示引擎生成。</span>
+          </p>
+          <p className="text-ink-soft text-xs">{SECRET_HINT}</p>
+        </div>
+        <Button variant="ghost" size="icon-sm" onClick={onDismissFallback} aria-label="Chiudi avviso">
+          <X />
+        </Button>
+      </div>
+    )
+  }
+
+  if (status === null || status.configured) return null
 
   return (
     <div
@@ -39,14 +72,11 @@ export function DemoBanner({ llmEnabled, fallbackReason, onDismissFallback }: De
       <FlaskConical className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
       <div className="space-y-0.5">
         <p className="font-medium">
-          Modalità dimostrativa: le trasmutazioni sono generate offline da un motore a modelli, senza alcun servizio
-          esterno.
+          Modalità dimostrativa: il modello MiniMax non è configurato, le trasmutazioni sono generate offline da un
+          motore a modelli.
         </p>
-        <p className="font-cjk text-ink-soft">演示模式：所有转化均由离线模板引擎生成，不调用任何外部服务。</p>
-        <p className="text-ink-soft text-xs">
-          Per attivare un LLM compatibile OpenAI imposta <code className="rounded bg-ink/8 px-1 py-0.5">VITE_OPENAI_API_KEY</code>{' '}
-          al momento della build (vedi README).
-        </p>
+        <p className="font-cjk text-ink-soft">演示模式：尚未配置 MiniMax 模型，所有转化均由离线模板引擎生成。</p>
+        <p className="text-ink-soft text-xs">{SECRET_HINT}</p>
       </div>
     </div>
   )

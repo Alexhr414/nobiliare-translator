@@ -1,4 +1,4 @@
-import { Check, Copy, Cpu, FlaskConical, Quote } from 'lucide-react'
+import { Check, Copy, Cpu, FlaskConical, LoaderCircle, Quote } from 'lucide-react'
 import { LEVEL_META, type Translation } from '@/engine/types'
 import { ResultCard } from '@/components/ResultCard'
 import { Badge } from '@/components/ui/badge'
@@ -23,10 +23,26 @@ function EmptyState() {
   )
 }
 
+function LoadingState() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gold/60 px-6 py-14 text-center"
+    >
+      <LoaderCircle className="text-gold size-8 animate-spin" strokeWidth={1.5} aria-hidden />
+      <p className="font-display text-ink-soft max-w-md text-balance text-lg italic">
+        Il Maestro di Cerimonie sta componendo le tre versioni…
+      </p>
+      <p className="font-cjk text-ink-soft/80 text-sm">司仪大人正在撰写三重版本……</p>
+    </div>
+  )
+}
+
 export function Results({ translation, busy }: ResultsProps) {
   const { copy, copiedKey } = useCopy()
 
-  if (!translation) return <EmptyState />
+  if (!translation) return busy ? <LoadingState /> : <EmptyState />
 
   const allKey = 'all'
   return (
@@ -41,7 +57,7 @@ export function Results({ translation, busy }: ResultsProps) {
           </Badge>
           {translation.source === 'llm' ? (
             <Badge variant="wine" title={translation.model}>
-              <Cpu /> LLM{translation.model ? ` · ${translation.model}` : ''}
+              <Cpu /> MiniMax{translation.model ? ` · ${translation.model}` : ''}
             </Badge>
           ) : (
             <Badge variant="outline">

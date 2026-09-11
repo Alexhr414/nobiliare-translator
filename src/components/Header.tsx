@@ -1,12 +1,13 @@
-import { Crown } from 'lucide-react'
+import { Crown, LoaderCircle } from 'lucide-react'
+import type { LlmStatus } from '@/engine/api'
 import { Badge } from '@/components/ui/badge'
 
 interface HeaderProps {
-  llmEnabled: boolean
-  model?: string
+  /** `null` while the `/api/transmute` probe is still in flight. */
+  status: LlmStatus | null
 }
 
-export function Header({ llmEnabled, model }: HeaderProps) {
+export function Header({ status }: HeaderProps) {
   return (
     <header className="flex flex-col items-center gap-4 pt-10 pb-6 text-center sm:pt-14">
       <div className="flex items-center gap-3 text-gold">
@@ -32,9 +33,13 @@ export function Header({ llmEnabled, model }: HeaderProps) {
         <Badge variant="outline" className="font-cjk">
           直白 → 贵族 → 无情
         </Badge>
-        {llmEnabled ? (
-          <Badge variant="wine" title={model}>
-            LLM attivo{model ? ` · ${model}` : ''}
+        {status === null ? (
+          <Badge variant="secondary" aria-live="polite">
+            <LoaderCircle className="animate-spin" /> Verifica del modello…
+          </Badge>
+        ) : status.configured ? (
+          <Badge variant="wine" title={status.model ?? undefined}>
+            MiniMax attivo{status.model ? ` · ${status.model}` : ''}
           </Badge>
         ) : (
           <Badge variant="secondary">Modalità demo · 演示模式</Badge>
