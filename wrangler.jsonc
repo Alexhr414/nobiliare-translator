@@ -3,10 +3,14 @@
   "name": "nobiliare-translator",
   "compatibility_date": "2026-09-01",
   // Cloudflare Pages: the Vite SPA is served from ./dist and the Pages Functions
-  // in ./functions (POST /api/transmute → MiniMax) are bundled automatically.
+  // in ./functions (GET/POST /api/transmute → LLM) are bundled automatically on
+  // `wrangler pages deploy` / `wrangler pages dev`.
   "pages_build_output_dir": "./dist",
-  // Server-side secrets, never shipped to the browser. Set them with
-  //   wrangler pages secret put MINIMAX_API_KEY --project-name nobiliare-translator
-  // and optionally MINIMAX_BASE_URL / MINIMAX_MODEL. Locally, put them in .dev.vars.
+  // Server-side secrets, never shipped to the browser. Set them once per project:
+  //   wrangler pages secret put OPENAI_API_KEY  --project-name nobiliare-translator   (required)
+  //   wrangler pages secret put OPENAI_BASE_URL --project-name nobiliare-translator   (optional, default https://api.openai.com/v1)
+  //   wrangler pages secret put OPENAI_MODEL    --project-name nobiliare-translator   (optional, default gpt-4o-mini)
+  // MiniMax is supported as an alternative provider via MINIMAX_API_KEY / MINIMAX_BASE_URL /
+  // MINIMAX_MODEL (used when OPENAI_API_KEY is unset). Locally, put them in ./.dev.vars.
   "vars": {}
 }

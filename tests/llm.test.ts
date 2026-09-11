@@ -4,7 +4,10 @@ import { describe, it } from 'node:test'
 import {
   DEFAULT_BASE_URL,
   DEFAULT_MODEL,
+  PROVIDERS,
   SYSTEM_PROMPT,
+  UpstreamError,
+  buildChatRequest,
   buildUserPrompt,
   extractJson,
   llmTranslate,
@@ -40,23 +43,83 @@ const jsonResponse = (body: unknown, status = 200) =>
 describe('resolveLlmConfig', () => {
   it('is null without an API key', () => {
     assert.equal(resolveLlmConfig({}), null)
+    assert.equal(resolveLlmConfig({ OPENAI_API_KEY: '   ' }), null)
     assert.equal(resolveLlmConfig({ MINIMAX_API_KEY: '   ' }), null)
   })
 
-  it('defaults to the MiniMax OpenAI-compatible endpoint and a current model', () => {
-    const cfg = resolveLlmConfig({ MINIMAX_API_KEY: 'sk-test' })
-    assert.deepEqual(cfg, { apiKey: 'sk-test', baseUrl: DEFAULT_BASE_URL, model: DEFAULT_MODEL })
-    assert.equal(DEFAULT_BASE_URL, 'https://api.minimax.io/v1')
-    assert.equal(DEFAULT_MODEL, 'MiniMax-M3')
+  it('defaults OPENAI_API_KEY to api.openai.com and gpt-4o-mini', () => {
+    const cfg = resolveLlmConfig({ OPENAI_API_KEY: 'sk-test' })
+    assert.deepEqual(cfg, { provider: 'openai', apiKey: 'sk-test', baseUrl: DEFAULT_BASE_URL, model: DEFAULT_MODEL })
+    assert.equal(DEFAULT_BASE_URL, 'https://api.openai.com/v1')
+    assert.equal(DEFAULT_MODEL, 'gpt-4o-mini')
   })
 
-  it('honours overrides and trims trailing slashes', () => {
+  it('honours OPENAI_BASE_URL / OPENAI_MODEL overrides and trims trailing slashes', () => {
+    const cfg = resolveLlmConfig({
+      OPENAI_API_KEY: ' sk-test ',
+      OPENAI_BASE_URL: 'https://openrouter.ai/api/v1///',
+      OPENAI_MODEL: ' openai/gpt-4.1-mini ',
+    })
+    assert.deepEqual(cfg, {
+      provider: 'openai',
+      apiKey: 'sk-test',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'openai/gpt-4.1-mini',
+    })
+  })
+
+  it('falls back to MINIMAX_API_KEY with the MiniMax endpoint and a current model', () => {
+    const cfg = resolveLlmConfig({ MINIMAX_API_KEY: 'sk-test' })
+    assert.deepEqual(cfg, {
+      provider: 'minimax',
+      apiKey: 'sk-test',
+      baseUrl: PROVIDERS.minimax.baseUrl,
+      model: PROVIDERS.minimax.model,
+    })
+    assert.equal(PROVIDERS.minimax.baseUrl, 'https://api.minimax.io/v1')
+    assert.equal(PROVIDERS.minimax.model, 'MiniMax-M3')
+  })
+
+  it('honours MiniMax overrides and trims trailing slashes', () => {
     const cfg = resolveLlmConfig({
       MINIMAX_API_KEY: ' sk-test ',
       MINIMAX_BASE_URL: 'https://api.minimaxi.com/v1///',
       MINIMAX_MODEL: 'MiniMax-M2.7-highspeed',
     })
-    assert.deepEqual(cfg, { apiKey: 'sk-test', baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M2.7-highspeed' })
+    assert.deepEqual(cfg, {
+      provider: 'minimax',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.minimaxi.com/v1',
+      model: 'MiniMax-M2.7-highspeed',
+    })
+  })
+
+  it('prefers OPENAI_API_KEY when both keys are set', () => {
+    const cfg = resolveLlmConfig({ OPENAI_API_KEY: 'sk-openai', MINIMAX_API_KEY: 'sk-minimax' })
+    assert.equal(cfg?.provider, 'openai')
+    assert.equal(cfg?.apiKey, 'sk-openai')
+  })
+})
+
+describe('buildChatRequest', () => {
+  it('sends JSON mode and no vendor extensions to OpenAI-compatible endpoints', () => {
+    const body = buildChatRequest('Ciao', { provider: 'openai', model: 'gpt-4o-mini' }, 0)
+    assert.equal(body.model, 'gpt-4o-mini')
+    assert.deepEqual(body.response_format, { type: 'json_object' })
+    assert.equal('thinking' in body, false)
+    assert.equal('reasoning_split' in body, false)
+    assert.equal(body.temperature, 0.8)
+    assert.equal(body.messages[0]?.content, SYSTEM_PROMPT)
+    assert.match(body.messages[1]?.content ?? '', /^Frase da trasmutare:\nCiao$/)
+  })
+
+  it('sends the reasoning controls to MiniMax and raises the temperature on regenerate', () => {
+    const body = buildChatRequest('Ciao', { provider: 'minimax', model: 'MiniMax-M3' }, 2)
+    assert.deepEqual(body.thinking, { type: 'disabled' })
+    assert.equal(body.reasoning_split, true)
+    assert.equal('response_format' in body, false)
+    assert.equal(body.temperature, 1.0)
+    assert.match(body.messages[1]?.content ?? '', /tentativo 3/)
   })
 })
 
@@ -100,8 +163,49 @@ describe('response parsing', () => {
   })
 })
 
+describe('llmTranslate (OpenAI-compatible)', () => {
+  const config = { provider: 'openai' as const, apiKey: 'sk-test', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
+
+  it('posts a JSON-mode chat completion with the bearer key and returns a Translation', async () => {
+    let seen: { url: string; init: RequestInit } | null = null
+    const doFetch = fakeFetch((url, init) => {
+      seen = { url, init }
+      return jsonResponse(completion(JSON.stringify(LEVELS_JSON)))
+    })
+
+    const t = await llmTranslate('Vattene, non ho tempo per te.', config, { fetchImpl: doFetch, now: 1 })
+
+    assert.ok(seen)
+    assert.equal(seen!.url, 'https://api.openai.com/v1/chat/completions')
+    const headers = seen!.init.headers as Record<string, string>
+    assert.equal(headers.Authorization, 'Bearer sk-test')
+    const body = JSON.parse(String(seen!.init.body))
+    assert.equal(body.model, 'gpt-4o-mini')
+    assert.deepEqual(body.response_format, { type: 'json_object' })
+    assert.equal(body.thinking, undefined)
+    assert.equal(body.reasoning_split, undefined)
+    assert.equal(t.source, 'llm')
+    assert.equal(t.model, 'gpt-4o-mini')
+    assert.deepEqual(t.levels, LEVELS_JSON)
+  })
+
+  it('raises UpstreamError with the status on non-2xx answers', async () => {
+    const doFetch = fakeFetch(() => new Response('{"error":{"message":"Incorrect API key"}}', { status: 401 }))
+    await assert.rejects(
+      llmTranslate('Ciao', config, { fetchImpl: doFetch }),
+      (e: unknown) => e instanceof UpstreamError && e.status === 401 && /LLM request failed \(401\)/.test(e.message),
+    )
+  })
+
+  it('aborts when the model does not answer within timeoutMs', async () => {
+    const hanging = ((_: unknown, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)))) as typeof fetch
+    await assert.rejects(llmTranslate('Ciao', config, { fetchImpl: hanging, timeoutMs: 5 }), /timed out/)
+  })
+})
+
 describe('llmTranslate (MiniMax)', () => {
-  const config = { apiKey: 'sk-test', baseUrl: 'https://api.minimax.io/v1', model: 'MiniMax-M3' }
+  const config = { provider: 'minimax' as const, apiKey: 'sk-test', baseUrl: 'https://api.minimax.io/v1', model: 'MiniMax-M3' }
 
   it('posts an OpenAI-compatible chat completion with the bearer key and returns a Translation', async () => {
     let seen: { url: string; init: RequestInit } | null = null

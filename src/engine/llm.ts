@@ -1,26 +1,65 @@
 /**
- * MiniMax client shared by the Cloudflare Pages Function (`functions/api/transmute.ts`)
+ * LLM client shared by the Cloudflare Pages Function (`functions/api/transmute.ts`)
  * and the test-suite. It never runs in the browser: the API key lives server-side only.
  *
- * MiniMax exposes an OpenAI-compatible Chat Completions endpoint at
- * `https://api.minimax.io/v1/chat/completions` (international; mainland China uses
- * `https://api.minimaxi.com/v1`). Current chat model ids are `MiniMax-M3`,
- * `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.5`, … — all reasoning models.
+ * Two providers speak the OpenAI Chat Completions protocol here:
+ * - `openai`: OPENAI_API_KEY (+ OPENAI_BASE_URL, OPENAI_MODEL). Any OpenAI-compatible
+ *   endpoint — api.openai.com by default, or OpenRouter, Groq, a proxy, …
+ * - `minimax`: MINIMAX_API_KEY (+ MINIMAX_BASE_URL, MINIMAX_MODEL). MiniMax's endpoint at
+ *   `https://api.minimax.io/v1` (mainland China: `https://api.minimaxi.com/v1`); its
+ *   M-series chat models (`MiniMax-M3`, `MiniMax-M2.7`, …) are reasoning models and need
+ *   thinking-specific request parameters and response handling.
+ * When both keys are set, OPENAI_API_KEY wins.
  */
 
 import { GLOSSARY } from './lexicon.ts'
 import { INTENT_META, detectIntent } from './intents.ts'
 import { hashString } from './demo.ts'
-import { LEVELS, type Level, type LlmConfig, type Rendering, type Translation } from './types.ts'
+import { LEVELS, type Level, type LlmConfig, type LlmProvider, type Rendering, type Translation } from './types.ts'
 
-export const DEFAULT_BASE_URL = 'https://api.minimax.io/v1'
-export const DEFAULT_MODEL = 'MiniMax-M3'
-const TIMEOUT_MS = 45_000
-// The answer is ~150 tokens of JSON, but M2.x models cannot switch thinking off and
-// the reasoning counts against this budget, so leave ample headroom.
+export interface ProviderDefaults {
+  keyName: string
+  baseUrlName: string
+  modelName: string
+  baseUrl: string
+  model: string
+  /** Human label for the UI badge. */
+  label: string
+}
+
+export const PROVIDERS: Record<LlmProvider, ProviderDefaults> = {
+  openai: {
+    keyName: 'OPENAI_API_KEY',
+    baseUrlName: 'OPENAI_BASE_URL',
+    modelName: 'OPENAI_MODEL',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    label: 'LLM',
+  },
+  minimax: {
+    keyName: 'MINIMAX_API_KEY',
+    baseUrlName: 'MINIMAX_BASE_URL',
+    modelName: 'MINIMAX_MODEL',
+    baseUrl: 'https://api.minimax.io/v1',
+    model: 'MiniMax-M3',
+    label: 'MiniMax',
+  },
+}
+
+/** Resolution order when several keys are configured. */
+export const PROVIDER_ORDER: readonly LlmProvider[] = ['openai', 'minimax']
+
+export const DEFAULT_BASE_URL = PROVIDERS.openai.baseUrl
+export const DEFAULT_MODEL = PROVIDERS.openai.model
+export const TIMEOUT_MS = 45_000
+// The answer is ~150 tokens of JSON, but MiniMax M2.x models cannot switch thinking off
+// and the reasoning counts against this budget, so leave ample headroom.
 const MAX_COMPLETION_TOKENS = 4096
 
 export interface LlmEnv {
+  OPENAI_API_KEY?: string
+  OPENAI_BASE_URL?: string
+  OPENAI_MODEL?: string
   MINIMAX_API_KEY?: string
   MINIMAX_BASE_URL?: string
   MINIMAX_MODEL?: string
@@ -28,13 +67,19 @@ export interface LlmEnv {
 
 /** Builds the client configuration from server-side env bindings; `null` when no key is set. */
 export function resolveLlmConfig(env: LlmEnv): LlmConfig | null {
-  const apiKey = env.MINIMAX_API_KEY?.trim()
-  if (!apiKey) return null
-  return {
-    apiKey,
-    baseUrl: (env.MINIMAX_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-    model: env.MINIMAX_MODEL?.trim() || DEFAULT_MODEL,
+  const vars = env as Record<string, string | undefined>
+  for (const provider of PROVIDER_ORDER) {
+    const defaults = PROVIDERS[provider]
+    const apiKey = vars[defaults.keyName]?.trim()
+    if (!apiKey) continue
+    return {
+      provider,
+      apiKey,
+      baseUrl: (vars[defaults.baseUrlName]?.trim() || defaults.baseUrl).replace(/\/+$/, ''),
+      model: vars[defaults.modelName]?.trim() || defaults.model,
+    }
   }
+  return null
 }
 
 export const SYSTEM_PROMPT = `Sei il Maestro di Cerimonie della casata di Rancido Stilnterra. Ricevi una frase qualsiasi (italiano, cinese o altra lingua) e la RISCRIVI in tre registri, ciascuno in italiano E in cinese. Preservi SEMPRE l'intento (una lode resta lode, un insulto resta insulto, una domanda resta domanda, un rifiuto resta rifiuto).
@@ -115,11 +160,52 @@ export function parseLevels(payload: unknown): Record<Level, Rendering> {
   return out
 }
 
+/** Body of the Chat Completions request; a few parameters depend on the provider. */
+export function buildChatRequest(input: string, config: Pick<LlmConfig, 'provider' | 'model'>, variant: number) {
+  const messages = [
+    { role: 'system' as const, content: SYSTEM_PROMPT },
+    { role: 'user' as const, content: buildUserPrompt(input, variant) },
+  ]
+  const temperature = variant === 0 ? 0.8 : 1.0
+
+  if (config.provider === 'minimax') {
+    return {
+      model: config.model,
+      temperature,
+      max_completion_tokens: MAX_COMPLETION_TOKENS,
+      // Honoured by MiniMax-M3 (answers directly); M2.x models keep thinking on.
+      thinking: { type: 'disabled' as const },
+      // Keeps any reasoning out of `content` so the JSON answer is clean.
+      reasoning_split: true,
+      messages,
+    }
+  }
+
+  return {
+    model: config.model,
+    temperature,
+    // OpenAI rejects unknown parameters, so only the portable JSON-mode switch is sent here.
+    response_format: { type: 'json_object' as const },
+    messages,
+  }
+}
+
+/** Raised when the model API answers with a non-2xx status. */
+export class UpstreamError extends Error {
+  readonly status: number
+  constructor(label: string, status: number, detail: string) {
+    super(`${label} request failed (${status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+    this.name = 'UpstreamError'
+    this.status = status
+  }
+}
+
 export interface LlmOptions {
   variant?: number
   signal?: AbortSignal
   fetchImpl?: typeof fetch
   now?: number
+  timeoutMs?: number
 }
 
 export async function llmTranslate(input: string, config: LlmConfig, options: LlmOptions = {}): Promise<Translation> {
@@ -127,9 +213,10 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
   const variant = options.variant ?? 0
   const now = options.now ?? Date.now()
   const doFetch = options.fetchImpl ?? fetch
+  const label = PROVIDERS[config.provider].label
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error('MiniMax request timed out')), TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(new Error(`${label} request timed out`)), options.timeoutMs ?? TIMEOUT_MS)
   options.signal?.addEventListener('abort', () => controller.abort(options.signal?.reason), { once: true })
 
   try {
@@ -140,35 +227,23 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
         Authorization: `Bearer ${config.apiKey}`,
       },
       signal: controller.signal,
-      body: JSON.stringify({
-        model: config.model,
-        temperature: variant === 0 ? 0.8 : 1.0,
-        max_completion_tokens: MAX_COMPLETION_TOKENS,
-        // Honoured by MiniMax-M3 (answers directly); M2.x models keep thinking on.
-        thinking: { type: 'disabled' },
-        // Keeps any reasoning out of `content` so the JSON answer is clean.
-        reasoning_split: true,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserPrompt(trimmed, variant) },
-        ],
-      }),
+      body: JSON.stringify(buildChatRequest(trimmed, config, variant)),
     })
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new Error(`MiniMax request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+      throw new UpstreamError(label, res.status, detail)
     }
 
     const data = (await res.json()) as ChatCompletion
     // MiniMax reports auth/quota/parameter errors with HTTP 200 and a non-zero base_resp.
     if (data.base_resp && data.base_resp.status_code && data.base_resp.status_code !== 0) {
-      throw new Error(`MiniMax error ${data.base_resp.status_code}: ${data.base_resp.status_msg ?? 'unknown'}`)
+      throw new Error(`${label} error ${data.base_resp.status_code}: ${data.base_resp.status_msg ?? 'unknown'}`)
     }
-    if (data.error?.message) throw new Error(`MiniMax error: ${data.error.message}`)
+    if (data.error?.message) throw new Error(`${label} error: ${data.error.message}`)
 
     const content = data.choices?.[0]?.message?.content
-    if (!content || !stripThinking(content)) throw new Error('MiniMax returned an empty completion')
+    if (!content || !stripThinking(content)) throw new Error(`${label} returned an empty completion`)
 
     const intent = detectIntent(trimmed)
     return {

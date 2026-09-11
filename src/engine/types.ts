@@ -84,7 +84,16 @@ export interface Translation {
   createdAt: number
 }
 
+/**
+ * `openai`  — any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, a proxy…), configured
+ *             with OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL.
+ * `minimax` — MiniMax's OpenAI-compatible endpoint, configured with MINIMAX_API_KEY / …;
+ *             needs reasoning-specific request parameters and response handling.
+ */
+export type LlmProvider = 'openai' | 'minimax'
+
 export interface LlmConfig {
+  provider: LlmProvider
   apiKey: string
   baseUrl: string
   model: string

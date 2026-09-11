@@ -53,9 +53,9 @@ export default function App() {
         setFallback(reason ?? null)
         // A live answer means the key is wired up even if the probe had said otherwise.
         if (translation.source === 'llm') {
-          setLlmStatus({ provider: 'minimax', configured: true, model: translation.model ?? null })
+          setLlmStatus((prev) => ({ provider: prev?.provider ?? null, configured: true, model: translation.model ?? null }))
         } else if (reason?.kind === 'unconfigured') {
-          setLlmStatus({ provider: 'minimax', configured: false, model: null })
+          setLlmStatus({ provider: null, configured: false, model: null })
         }
         addToHistory(translation)
       } catch (error) {

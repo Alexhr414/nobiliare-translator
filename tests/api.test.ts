@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { handleTransmute } from '../functions/api/transmute.ts'
-import { API_ENDPOINT, MAX_INPUT_LENGTH } from '../src/engine/api.ts'
-import { ApiRequestError, fetchLlmStatus, requestTransmute, translate } from '../src/engine/translate.ts'
+import { UNCONFIGURED_MESSAGE, handleTransmute } from '../functions/api/transmute.ts'
+import { API_ENDPOINT, MAX_BODY_BYTES, MAX_INPUT_LENGTH, isTranslation, providerLabel } from '../src/engine/api.ts'
+import { ApiRequestError, fetchLlmStatus, readTranslateMode, requestTransmute, translate } from '../src/engine/translate.ts'
 
 const LEVELS_JSON = {
   diretta: { it: 'Ho una fame da lupi.', zh: '我饿得像狼一样。' },
@@ -24,23 +24,31 @@ const minimaxOk = (() =>
 
 const minimaxDown = (() => Promise.resolve(new Response('upstream exploded', { status: 500 }))) as typeof fetch
 
-const post = (body: unknown) =>
+const post = (body: unknown, headers: Record<string, string> = {}) =>
   new Request('https://example.pages.dev' + API_ENDPOINT, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
 
-const ENV = { MINIMAX_API_KEY: 'sk-test' }
+const readError = async (res: Response) => (await res.json()) as { error: string; message: string }
+
+const ENV = { OPENAI_API_KEY: 'sk-test' }
+const MINIMAX_ENV = { MINIMAX_API_KEY: 'sk-test' }
 
 describe('Pages Function /api/transmute', () => {
-  it('GET reports whether MiniMax is configured without leaking the key', async () => {
+  it('GET reports whether a model is configured without leaking the key', async () => {
     const off = await handleTransmute(new Request('https://x/api/transmute'), {})
     assert.equal(off.status, 200)
-    assert.deepEqual(await off.json(), { provider: 'minimax', configured: false, model: null })
+    assert.deepEqual(await off.json(), { provider: null, configured: false, model: null })
 
-    const on = await handleTransmute(new Request('https://x/api/transmute'), { ...ENV, MINIMAX_MODEL: 'MiniMax-M2.7' })
-    const body = await on.text()
+    const openai = await handleTransmute(new Request('https://x/api/transmute'), ENV)
+    let body = await openai.text()
+    assert.deepEqual(JSON.parse(body), { provider: 'openai', configured: true, model: 'gpt-4o-mini' })
+    assert.ok(!body.includes('sk-test'))
+
+    const minimax = await handleTransmute(new Request('https://x/api/transmute'), { ...MINIMAX_ENV, MINIMAX_MODEL: 'MiniMax-M2.7' })
+    body = await minimax.text()
     assert.deepEqual(JSON.parse(body), { provider: 'minimax', configured: true, model: 'MiniMax-M2.7' })
     assert.ok(!body.includes('sk-test'))
   })
@@ -49,6 +57,31 @@ describe('Pages Function /api/transmute', () => {
     const res = await handleTransmute(new Request('https://x/api/transmute', { method: 'DELETE' }), ENV)
     assert.equal(res.status, 405)
     assert.equal(res.headers.get('allow'), 'GET, HEAD, POST')
+    assert.equal((await readError(res)).error, 'invalid_request')
+  })
+
+  it('rejects cross-site browser requests', async () => {
+    const res = await handleTransmute(post({ input: 'Ciao' }, { 'sec-fetch-site': 'cross-site' }), ENV, { fetchImpl: minimaxOk })
+    assert.equal(res.status, 403)
+    assert.equal((await readError(res)).error, 'forbidden')
+    for (const site of ['same-origin', 'none']) {
+      const ok = await handleTransmute(post({ input: 'Ciao' }, { 'sec-fetch-site': site }), ENV, { fetchImpl: minimaxOk })
+      assert.equal(ok.status, 200, site)
+    }
+  })
+
+  it('requires a JSON content type', async () => {
+    const req = new Request('https://x/api/transmute', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'Ciao' })
+    const res = await handleTransmute(req, ENV, { fetchImpl: minimaxOk })
+    assert.equal(res.status, 415)
+    assert.match((await readError(res)).message, /application\/json/)
+  })
+
+  it('rejects oversized bodies', async () => {
+    const res = await handleTransmute(post({ input: 'Ciao', pad: 'p'.repeat(MAX_BODY_BYTES) }), ENV, { fetchImpl: minimaxOk })
+    assert.equal(res.status, 413)
+    const declared = await handleTransmute(post({ input: 'Ciao' }, { 'content-length': String(MAX_BODY_BYTES + 1) }), ENV)
+    assert.equal(declared.status, 413)
   })
 
   it('validates the body', async () => {
@@ -65,28 +98,37 @@ describe('Pages Function /api/transmute', () => {
     for (const [body, expected] of cases) {
       const res = await handleTransmute(post(body), ENV, { fetchImpl: minimaxOk })
       assert.equal(res.status, 400, JSON.stringify(body))
-      const err = (await res.json()) as { error: string; message: string }
+      const err = await readError(res)
       assert.equal(err.error, 'invalid_request')
       assert.match(err.message, expected)
     }
   })
 
-  it('answers 503 llm_unconfigured when the secret is missing', async () => {
-    const res = await handleTransmute(post({ input: 'Ho fame' }), {}, { fetchImpl: minimaxOk })
+  it('answers 503 llm_unconfigured naming both secrets when no key is set', async () => {
+    let called = false
+    const spy = (() => {
+      called = true
+      return minimaxOk()
+    }) as typeof fetch
+    const res = await handleTransmute(post({ input: 'Ho fame' }), {}, { fetchImpl: spy })
     assert.equal(res.status, 503)
-    const err = (await res.json()) as { error: string; message: string }
+    const err = await readError(res)
     assert.equal(err.error, 'llm_unconfigured')
-    assert.match(err.message, /MINIMAX_API_KEY/)
+    assert.equal(err.message, UNCONFIGURED_MESSAGE)
+    assert.match(err.message, /OPENAI_API_KEY or MINIMAX_API_KEY/)
+    assert.match(err.message, /wrangler pages secret put/)
+    assert.equal(called, false, 'must not call upstream without a key')
   })
 
-  it('returns the Translation the UI understands', async () => {
+  it('returns the Translation the UI understands (OpenAI provider)', async () => {
     const res = await handleTransmute(post({ input: '  Ho fame  ', variant: 2 }), ENV, { fetchImpl: minimaxOk, now: 42 })
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-type') ?? '', /application\/json/)
     assert.equal(res.headers.get('cache-control'), 'no-store')
     const t = (await res.json()) as Record<string, unknown>
+    assert.ok(isTranslation(t))
     assert.equal(t.source, 'llm')
-    assert.equal(t.model, 'MiniMax-M3')
+    assert.equal(t.model, 'gpt-4o-mini')
     assert.equal(t.input, 'Ho fame')
     assert.equal(t.intent, 'hunger')
     assert.equal(t.variant, 2)
@@ -94,12 +136,67 @@ describe('Pages Function /api/transmute', () => {
     assert.deepEqual(t.levels, LEVELS_JSON)
   })
 
-  it('answers 502 llm_failed when MiniMax errors', async () => {
+  it('returns the Translation the UI understands (MiniMax provider)', async () => {
+    const res = await handleTransmute(post({ input: 'Ho fame' }), MINIMAX_ENV, { fetchImpl: minimaxOk, now: 42 })
+    assert.equal(res.status, 200)
+    const t = (await res.json()) as Record<string, unknown>
+    assert.equal(t.model, 'MiniMax-M3')
+    assert.deepEqual(t.levels, LEVELS_JSON)
+  })
+
+  it('answers 502 llm_failed when the model API errors', async () => {
     const res = await handleTransmute(post({ input: 'Ho fame' }), ENV, { fetchImpl: minimaxDown })
     assert.equal(res.status, 502)
-    const err = (await res.json()) as { error: string; message: string }
+    const err = await readError(res)
     assert.equal(err.error, 'llm_failed')
     assert.match(err.message, /500/)
+  })
+
+  it('never echoes the API key and hints at the secret on 401', async () => {
+    const rejecting = (() => Promise.resolve(new Response('Incorrect API key provided: sk-test', { status: 401 }))) as typeof fetch
+    const res = await handleTransmute(post({ input: 'Ho fame' }), ENV, { fetchImpl: rejecting })
+    assert.equal(res.status, 502)
+    const raw = await res.text()
+    assert.doesNotMatch(raw, /sk-test/)
+    const err = JSON.parse(raw) as { error: string; message: string }
+    assert.equal(err.error, 'llm_failed')
+    assert.match(err.message, /\[redacted\]/)
+    assert.match(err.message, /check the OPENAI_API_KEY secret/)
+  })
+
+  it('answers 504 when the model does not answer in time', async () => {
+    const hanging = ((_: unknown, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)))) as typeof fetch
+    const res = await handleTransmute(post({ input: 'Ho fame' }), ENV, { fetchImpl: hanging, timeoutMs: 5 })
+    assert.equal(res.status, 504)
+    const err = await readError(res)
+    assert.equal(err.error, 'llm_failed')
+    assert.match(err.message, /did not answer in time/)
+  })
+})
+
+describe('wire contract helpers', () => {
+  it('labels providers for the UI', () => {
+    assert.equal(providerLabel('openai'), 'LLM')
+    assert.equal(providerLabel('minimax'), 'MiniMax')
+    assert.equal(providerLabel(null), 'LLM')
+  })
+
+  it('isTranslation checks the three levels', () => {
+    const base = { id: 'x', input: 'y', intent: 'praise', source: 'llm', variant: 0, createdAt: 1 }
+    assert.equal(isTranslation({ ...base, levels: LEVELS_JSON }), true)
+    assert.equal(isTranslation({ ...base, levels: { diretta: LEVELS_JSON.diretta } }), false)
+    assert.equal(isTranslation({ ...base, levels: null }), false)
+    assert.equal(isTranslation(null), false)
+  })
+
+  it('readTranslateMode defaults to the API and only opts into demo explicitly', () => {
+    assert.equal(readTranslateMode(undefined), 'api')
+    assert.equal(readTranslateMode({}), 'api')
+    assert.equal(readTranslateMode({ VITE_TRANSLATE_MODE: '' }), 'api')
+    assert.equal(readTranslateMode({ VITE_TRANSLATE_MODE: 'llm' }), 'api')
+    assert.equal(readTranslateMode({ VITE_TRANSLATE_MODE: 'demo' }), 'demo')
+    assert.equal(readTranslateMode({ VITE_TRANSLATE_MODE: ' Demo ' }), 'demo')
   })
 })
 
@@ -127,10 +224,10 @@ describe('frontend translate()', () => {
     const { translation, fallback } = await translate('Ho fame', { fetchImpl: viaHandler({}, minimaxOk) })
     assert.equal(translation.source, 'demo')
     assert.equal(fallback?.kind, 'unconfigured')
-    assert.match(fallback?.message ?? '', /MINIMAX_API_KEY/)
+    assert.match(fallback?.message ?? '', /OPENAI_API_KEY/)
   })
 
-  it('falls back to the demo engine with a "failed" reason when MiniMax errors', async () => {
+  it('falls back to the demo engine with a "failed" reason when the model API errors', async () => {
     const { translation, fallback } = await translate('Ho fame', { variant: 1, fetchImpl: viaHandler(ENV, minimaxDown) })
     assert.equal(translation.source, 'demo')
     assert.equal(translation.variant, 1)
@@ -169,6 +266,11 @@ describe('frontend translate()', () => {
 describe('fetchLlmStatus', () => {
   it('reads the probe', async () => {
     assert.deepEqual(await fetchLlmStatus({ fetchImpl: viaHandler(ENV, minimaxOk) }), {
+      provider: 'openai',
+      configured: true,
+      model: 'gpt-4o-mini',
+    })
+    assert.deepEqual(await fetchLlmStatus({ fetchImpl: viaHandler(MINIMAX_ENV, minimaxOk) }), {
       provider: 'minimax',
       configured: true,
       model: 'MiniMax-M3',

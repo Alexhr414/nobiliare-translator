@@ -23,18 +23,29 @@ function EmptyState() {
   )
 }
 
-function LoadingState() {
+function LoadingState({ compact = false }: { compact?: boolean }) {
+  if (compact) {
+    return (
+      <div role="status" aria-live="polite" className="text-ink-soft flex items-center gap-2 text-sm">
+        <LoaderCircle className="text-wine size-4 animate-spin" aria-hidden />
+        <p className="font-display italic">
+          Il Maestro di Cerimonie sta componendo le tre versioni…
+          <span className="font-cjk not-italic"> · 正在转化，请稍候…</span>
+        </p>
+      </div>
+    )
+  }
   return (
     <div
       role="status"
       aria-live="polite"
-      className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gold/60 px-6 py-14 text-center"
+      className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gold/60 bg-gold-soft/20 px-6 py-14 text-center"
     >
       <LoaderCircle className="text-gold size-8 animate-spin" strokeWidth={1.5} aria-hidden />
-      <p className="font-display text-ink-soft max-w-md text-balance text-lg italic">
+      <p className="font-display text-ink max-w-md text-balance text-lg italic">
         Il Maestro di Cerimonie sta componendo le tre versioni…
       </p>
-      <p className="font-cjk text-ink-soft/80 text-sm">司仪大人正在撰写三重版本……</p>
+      <p className="font-cjk text-ink-soft/80 text-sm">司仪大人正在撰写三重版本……请稍候</p>
     </div>
   )
 }
@@ -47,6 +58,7 @@ export function Results({ translation, busy }: ResultsProps) {
   const allKey = 'all'
   return (
     <section aria-label="Risultati" aria-busy={busy} className="space-y-4">
+      {busy && <LoadingState compact />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="font-display text-ink text-xl font-semibold sm:text-2xl">
@@ -57,7 +69,7 @@ export function Results({ translation, busy }: ResultsProps) {
           </Badge>
           {translation.source === 'llm' ? (
             <Badge variant="wine" title={translation.model}>
-              <Cpu /> MiniMax{translation.model ? ` · ${translation.model}` : ''}
+              <Cpu /> LLM{translation.model ? ` · ${translation.model}` : ''}
             </Badge>
           ) : (
             <Badge variant="outline">

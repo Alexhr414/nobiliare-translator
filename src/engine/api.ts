@@ -1,10 +1,12 @@
-/** Wire contract between the SPA and the Pages Function at `POST /api/transmute`. */
+/** Wire contract between the SPA and the Pages Function at `/api/transmute`. */
 
-import type { Translation } from './types.ts'
+import { LEVELS, type LlmProvider, type Translation } from './types.ts'
 
 export const API_ENDPOINT = '/api/transmute'
 export const MAX_INPUT_LENGTH = 600
 export const MAX_VARIANT = 50
+/** Upper bound for the JSON request body; the real payload is well under 2 KiB. */
+export const MAX_BODY_BYTES = 16 * 1024
 
 export interface TransmuteRequest {
   input: string
@@ -14,7 +16,13 @@ export interface TransmuteRequest {
 /** Successful responses are the same `Translation` object the UI renders. */
 export type TransmuteResponse = Translation
 
-export type ApiErrorCode = 'invalid_request' | 'llm_unconfigured' | 'llm_failed'
+/**
+ * `invalid_request`  400/405/413/415 — bad method, body, content type or size
+ * `forbidden`        403 — cross-site browser request
+ * `llm_unconfigured` 503 — no API key secret on the Pages project
+ * `llm_failed`       502/504 — the model API errored, answered garbage, or timed out
+ */
+export type ApiErrorCode = 'invalid_request' | 'forbidden' | 'llm_unconfigured' | 'llm_failed'
 
 export interface ApiError {
   error: ApiErrorCode
@@ -23,15 +31,29 @@ export interface ApiError {
 
 /** `GET /api/transmute` — lets the UI say whether the live model is wired up, without exposing the key. */
 export interface LlmStatus {
-  provider: 'minimax'
+  provider: LlmProvider | null
   configured: boolean
   model: string | null
+}
+
+/** Badge label for a provider; OPENAI_* may point at any OpenAI-compatible service, hence the neutral name. */
+export function providerLabel(provider: LlmProvider | null): string {
+  return provider === 'minimax' ? 'MiniMax' : 'LLM'
 }
 
 export function isApiError(value: unknown): value is ApiError {
   if (typeof value !== 'object' || value === null) return false
   const v = value as Record<string, unknown>
   return typeof v.error === 'string' && typeof v.message === 'string'
+}
+
+function hasRenderings(levels: unknown): boolean {
+  if (typeof levels !== 'object' || levels === null) return false
+  const l = levels as Record<string, unknown>
+  return LEVELS.every((level) => {
+    const r = l[level] as Record<string, unknown> | undefined
+    return typeof r === 'object' && r !== null && typeof r.it === 'string' && typeof r.zh === 'string'
+  })
 }
 
 export function isTranslation(value: unknown): value is Translation {
@@ -41,8 +63,7 @@ export function isTranslation(value: unknown): value is Translation {
     typeof v.id === 'string' &&
     typeof v.input === 'string' &&
     typeof v.intent === 'string' &&
-    typeof v.levels === 'object' &&
-    v.levels !== null &&
+    hasRenderings(v.levels) &&
     (v.source === 'llm' || v.source === 'demo') &&
     typeof v.variant === 'number' &&
     typeof v.createdAt === 'number'

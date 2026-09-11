@@ -14,6 +14,19 @@ export class ApiRequestError extends Error {
   }
 }
 
+/**
+ * `api`  — default: every phrase goes to the same-origin `/api/transmute` Pages Function.
+ * `demo` — offline template engine only, no network; opt in with `VITE_TRANSLATE_MODE=demo`
+ *          for development without a Cloudflare dev server or secrets.
+ */
+export type TranslateMode = 'api' | 'demo'
+
+export function readTranslateMode(env: Record<string, string | undefined> | undefined): TranslateMode {
+  return env?.VITE_TRANSLATE_MODE?.trim().toLowerCase() === 'demo' ? 'demo' : 'api'
+}
+
+export const translateMode: TranslateMode = readTranslateMode(import.meta.env)
+
 export interface TranslateOptions {
   variant?: number
   signal?: AbortSignal
@@ -80,7 +93,7 @@ export async function requestTransmute(
 
 export async function translate(input: string, options: TranslateOptions = {}): Promise<TranslateResult> {
   const variant = options.variant ?? 0
-  if (options.forceDemo) return { translation: demoTranslate(input, { variant }) }
+  if (options.forceDemo || translateMode === 'demo') return { translation: demoTranslate(input, { variant }) }
 
   try {
     const translation = await requestTransmute(input, variant, { signal: options.signal, fetchImpl: options.fetchImpl })
@@ -93,17 +106,22 @@ export async function translate(input: string, options: TranslateOptions = {}): 
   }
 }
 
-export const OFFLINE_STATUS: LlmStatus = { provider: 'minimax', configured: false, model: null }
+export const OFFLINE_STATUS: LlmStatus = { provider: null, configured: false, model: null }
 
-/** Asks the Pages Function whether MiniMax is configured. Any failure (e.g. plain `vite dev`) reads as offline. */
+/** Asks the Pages Function whether a model is configured. Any failure (e.g. plain `vite dev`) reads as offline. */
 export async function fetchLlmStatus(options: Pick<TranslateOptions, 'signal' | 'fetchImpl'> = {}): Promise<LlmStatus> {
+  if (translateMode === 'demo') return OFFLINE_STATUS
   const doFetch = options.fetchImpl ?? fetch
   try {
     const res = await doFetch(API_ENDPOINT, { headers: { accept: 'application/json' }, signal: options.signal })
     if (!res.ok) return OFFLINE_STATUS
     const payload = (await readJson(res)) as Partial<LlmStatus>
     if (typeof payload.configured !== 'boolean') return OFFLINE_STATUS
-    return { provider: 'minimax', configured: payload.configured, model: typeof payload.model === 'string' ? payload.model : null }
+    return {
+      provider: payload.provider === 'openai' || payload.provider === 'minimax' ? payload.provider : null,
+      configured: payload.configured,
+      model: typeof payload.model === 'string' ? payload.model : null,
+    }
   } catch (error) {
     if (options.signal?.aborted) throw error
     return OFFLINE_STATUS

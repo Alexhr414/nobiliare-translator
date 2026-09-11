@@ -1,5 +1,5 @@
 import { Crown, LoaderCircle } from 'lucide-react'
-import type { LlmStatus } from '@/engine/api'
+import { providerLabel, type LlmStatus } from '@/engine/api'
 import { Badge } from '@/components/ui/badge'
 
 interface HeaderProps {
@@ -39,7 +39,7 @@ export function Header({ status }: HeaderProps) {
           </Badge>
         ) : status.configured ? (
           <Badge variant="wine" title={status.model ?? undefined}>
-            MiniMax attivo{status.model ? ` · ${status.model}` : ''}
+            {providerLabel(status.provider)} attivo{status.model ? ` · ${status.model}` : ''}
           </Badge>
         ) : (
           <Badge variant="secondary">Modalità demo · 演示模式</Badge>
