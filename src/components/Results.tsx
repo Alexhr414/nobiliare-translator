@@ -1,4 +1,4 @@
-import { Check, Copy, Cpu, FlaskConical, Quote } from 'lucide-react'
+import { Check, Copy, Cpu, FlaskConical, LoaderCircle, Quote } from 'lucide-react'
 import { LEVEL_META, type Translation } from '@/engine/types'
 import { ResultCard } from '@/components/ResultCard'
 import { Badge } from '@/components/ui/badge'
@@ -23,14 +23,35 @@ function EmptyState() {
   )
 }
 
+function LoadingNotice({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={
+        compact
+          ? 'text-ink-soft flex items-center gap-2 text-sm'
+          : 'flex flex-col items-center gap-3 rounded-xl border border-dashed border-gold/60 bg-gold-soft/20 px-6 py-14 text-center'
+      }
+    >
+      <LoaderCircle className={compact ? 'text-wine size-4 animate-spin' : 'text-wine size-8 animate-spin'} aria-hidden />
+      <p className={compact ? 'font-display italic' : 'font-display text-ink max-w-md text-balance text-lg italic'}>
+        Il Maestro di Cerimonie sta componendo le tre versioni…
+        <span className="font-cjk text-ink-soft not-italic"> · 正在转化，请稍候…</span>
+      </p>
+    </div>
+  )
+}
+
 export function Results({ translation, busy }: ResultsProps) {
   const { copy, copiedKey } = useCopy()
 
-  if (!translation) return <EmptyState />
+  if (!translation) return busy ? <LoadingNotice /> : <EmptyState />
 
   const allKey = 'all'
   return (
     <section aria-label="Risultati" aria-busy={busy} className="space-y-4">
+      {busy && <LoadingNotice compact />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="font-display text-ink text-xl font-semibold sm:text-2xl">

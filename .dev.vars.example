@@ -1,0 +1,7 @@
+# Server-side secrets for the Pages Function when running `wrangler pages dev`.
+# Copy to `.dev.vars` (git-ignored). In production set the same names with:
+#   wrangler pages secret put OPENAI_API_KEY --project-name nobiliare-translator
+OPENAI_API_KEY=
+# Optional overrides
+# OPENAI_BASE_URL=https://api.openai.com/v1
+# OPENAI_MODEL=gpt-4o-mini

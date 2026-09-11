@@ -1,12 +1,14 @@
 import { Crown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import type { TranslateMode } from '@/engine/translate'
 
 interface HeaderProps {
-  llmEnabled: boolean
+  mode: TranslateMode
+  /** Model reported by the last successful API translation, if any. */
   model?: string
 }
 
-export function Header({ llmEnabled, model }: HeaderProps) {
+export function Header({ mode, model }: HeaderProps) {
   return (
     <header className="flex flex-col items-center gap-4 pt-10 pb-6 text-center sm:pt-14">
       <div className="flex items-center gap-3 text-gold">
@@ -32,8 +34,8 @@ export function Header({ llmEnabled, model }: HeaderProps) {
         <Badge variant="outline" className="font-cjk">
           直白 → 贵族 → 无情
         </Badge>
-        {llmEnabled ? (
-          <Badge variant="wine" title={model}>
+        {mode === 'api' ? (
+          <Badge variant="wine" title={model ?? 'Traduzione tramite /api/transmute'}>
             LLM attivo{model ? ` · ${model}` : ''}
           </Badge>
         ) : (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isLlmEnabled, llmConfig, translate } from '@/engine/translate'
+import { translate, translateMode } from '@/engine/translate'
 import type { Translation } from '@/engine/types'
 import { DemoBanner } from '@/components/DemoBanner'
 import { Footer } from '@/components/Footer'
@@ -81,14 +81,10 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 sm:px-6">
-      <Header llmEnabled={isLlmEnabled} model={llmConfig?.model} />
+      <Header mode={translateMode} model={current?.source === 'llm' ? current.model : undefined} />
 
       <main className="flex flex-1 flex-col gap-6 pb-10">
-        <DemoBanner
-          llmEnabled={isLlmEnabled}
-          fallbackReason={fallbackReason}
-          onDismissFallback={() => setFallbackReason(null)}
-        />
+        <DemoBanner mode={translateMode} fallbackReason={fallbackReason} onDismissFallback={() => setFallbackReason(null)} />
 
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <InputPanel

@@ -1,24 +1,37 @@
+/**
+ * Server-side LLM client. This module runs inside the Cloudflare Pages Function
+ * (`functions/api/transmute.ts`) and in Node tests; it must never be imported by
+ * browser code, because the API key lives only in Cloudflare secrets.
+ */
 import { GLOSSARY } from './lexicon.ts'
 import { INTENT_META, detectIntent } from './intents.ts'
 import { hashString } from './demo.ts'
-import { LEVELS, type Level, type LlmConfig, type Rendering, type Translation } from './types.ts'
+import { extractJson, parseLevels } from './schema.ts'
+import type { LlmConfig, Translation } from './types.ts'
 
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_MODEL = 'gpt-4o-mini'
-const TIMEOUT_MS = 30_000
+export const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+export const DEFAULT_MODEL = 'gpt-4o-mini'
+export const TIMEOUT_MS = 30_000
 
-/** Reads the optional LLM configuration from Vite env; `null` means demo mode. */
-export function readLlmConfig(env: Record<string, string | undefined> = import.meta.env): LlmConfig | null {
-  const apiKey = env.VITE_OPENAI_API_KEY?.trim()
+/** Environment bindings the Pages Function reads (Cloudflare secrets / vars). */
+export interface LlmEnv {
+  OPENAI_API_KEY?: string
+  OPENAI_BASE_URL?: string
+  OPENAI_MODEL?: string
+}
+
+/** Reads the LLM configuration from server-side env; `null` means no key is set. */
+export function readLlmConfig(env: LlmEnv): LlmConfig | null {
+  const apiKey = env.OPENAI_API_KEY?.trim()
   if (!apiKey) return null
   return {
     apiKey,
-    baseUrl: (env.VITE_OPENAI_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-    model: env.VITE_OPENAI_MODEL?.trim() || DEFAULT_MODEL,
+    baseUrl: (env.OPENAI_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    model: env.OPENAI_MODEL?.trim() || DEFAULT_MODEL,
   }
 }
 
-const SYSTEM_PROMPT = `Sei il Maestro di Cerimonie della casata di Rancido Stilnterra. Ricevi una frase qualsiasi (italiano, cinese o altra lingua) e la RISCRIVI in tre registri, ciascuno in italiano E in cinese. Preservi SEMPRE l'intento (una lode resta lode, un insulto resta insulto, una domanda resta domanda, un rifiuto resta rifiuto).
+export const SYSTEM_PROMPT = `Sei il Maestro di Cerimonie della casata di Rancido Stilnterra. Ricevi una frase qualsiasi (italiano, cinese o altra lingua) e la RISCRIVI in tre registri, ciascuno in italiano E in cinese. Preservi SEMPRE l'intento (una lode resta lode, un insulto resta insulto, una domanda resta domanda, un rifiuto resta rifiuto).
 
 REGOLA CARDINALE — PARAFRASI, MAI ECO: ogni livello è una riformulazione completa e autonoma del medesimo intento. Non incollare, citare o incorniciare la frase dell'utente ("Ciao. <frase originale>." è vietato). Non usare virgolette per riportare le parole dell'utente. Puoi conservare soltanto il nome del destinatario (es. "Ale") e, se indispensabile al senso, l'oggetto concreto della richiesta (es. "il sale"), riformulato nel registro giusto. Il lettore non deve poter indovinare le parole esatte dell'utente leggendo il risultato.
 
@@ -47,34 +60,56 @@ interface ChatCompletion {
   choices?: { message?: { content?: string | null } }[]
 }
 
-function extractJson(text: string): unknown {
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    const start = cleaned.indexOf('{')
-    const end = cleaned.lastIndexOf('}')
-    if (start === -1 || end <= start) throw new Error('Model response contained no JSON object')
-    return JSON.parse(cleaned.slice(start, end + 1))
+/** Body of the OpenAI-compatible `chat/completions` request for a phrase. */
+export function buildChatRequest(input: string, model: string, variant: number) {
+  return {
+    model,
+    temperature: variant === 0 ? 0.8 : 1.0,
+    response_format: { type: 'json_object' as const },
+    messages: [
+      { role: 'system' as const, content: SYSTEM_PROMPT },
+      {
+        role: 'user' as const,
+        content:
+          variant > 0
+            ? `Frase da trasmutare (proponi una variante diversa dalle precedenti, tentativo ${variant + 1}):\n${input}`
+            : `Frase da trasmutare:\n${input}`,
+      },
+    ],
   }
 }
 
-function isRendering(value: unknown): value is Rendering {
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  return typeof v.it === 'string' && v.it.trim() !== '' && typeof v.zh === 'string' && v.zh.trim() !== ''
+export interface CompletionMeta {
+  input: string
+  model: string
+  variant: number
+  now: number
 }
 
-function parseLevels(payload: unknown): Record<Level, Rendering> {
-  if (typeof payload !== 'object' || payload === null) throw new Error('Model response is not an object')
-  const obj = payload as Record<string, unknown>
-  const out = {} as Record<Level, Rendering>
-  for (const level of LEVELS) {
-    const r = obj[level]
-    if (!isRendering(r)) throw new Error(`Model response is missing level "${level}"`)
-    out[level] = { it: r.it.trim(), zh: r.zh.trim() }
+/** Turns the raw completion text into the `Translation` the UI renders. */
+export function completionToTranslation(content: string, meta: CompletionMeta): Translation {
+  const intent = detectIntent(meta.input)
+  return {
+    id: `${meta.now.toString(36)}-${hashString(meta.input + meta.variant).toString(36)}`,
+    input: meta.input,
+    intent,
+    intentLabel: INTENT_META[intent].label,
+    levels: parseLevels(extractJson(content)),
+    source: 'llm',
+    model: meta.model,
+    variant: meta.variant,
+    createdAt: meta.now,
   }
-  return out
+}
+
+/** Raised when the upstream model API answers with a non-2xx status. */
+export class UpstreamError extends Error {
+  readonly status: number
+  constructor(status: number, detail: string) {
+    super(`LLM request failed (${status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+    this.name = 'UpstreamError'
+    this.status = status
+  }
 }
 
 export interface LlmOptions {
@@ -82,6 +117,7 @@ export interface LlmOptions {
   signal?: AbortSignal
   fetchImpl?: typeof fetch
   now?: number
+  timeoutMs?: number
 }
 
 export async function llmTranslate(input: string, config: LlmConfig, options: LlmOptions = {}): Promise<Translation> {
@@ -91,7 +127,7 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
   const doFetch = options.fetchImpl ?? fetch
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error('LLM request timed out')), TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(new Error('LLM request timed out')), options.timeoutMs ?? TIMEOUT_MS)
   options.signal?.addEventListener('abort', () => controller.abort(options.signal?.reason), { once: true })
 
   try {
@@ -102,44 +138,19 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
         Authorization: `Bearer ${config.apiKey}`,
       },
       signal: controller.signal,
-      body: JSON.stringify({
-        model: config.model,
-        temperature: variant === 0 ? 0.8 : 1.0,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content:
-              variant > 0
-                ? `Frase da trasmutare (proponi una variante diversa dalle precedenti, tentativo ${variant + 1}):\n${trimmed}`
-                : `Frase da trasmutare:\n${trimmed}`,
-          },
-        ],
-      }),
+      body: JSON.stringify(buildChatRequest(trimmed, config.model, variant)),
     })
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new Error(`LLM request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+      throw new UpstreamError(res.status, detail)
     }
 
     const data = (await res.json()) as ChatCompletion
     const content = data.choices?.[0]?.message?.content
     if (!content) throw new Error('LLM returned an empty completion')
 
-    const intent = detectIntent(trimmed)
-    return {
-      id: `${now.toString(36)}-${hashString(trimmed + variant).toString(36)}`,
-      input: trimmed,
-      intent,
-      intentLabel: INTENT_META[intent].label,
-      levels: parseLevels(extractJson(content)),
-      source: 'llm',
-      model: config.model,
-      variant,
-      createdAt: now,
-    }
+    return completionToTranslation(content, { input: trimmed, model: config.model, variant, now })
   } finally {
     clearTimeout(timer)
   }

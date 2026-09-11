@@ -9,7 +9,8 @@ export function Footer() {
       </p>
       <p className="font-cjk">于朗奇多·斯蒂尔恩特拉府邸撰写，勤勉合礼，雅言讥讽。</p>
       <p>
-        Nessun dato lascia il browser in modalità demo · la cronologia vive in <code>localStorage</code>.
+        Le frasi viaggiano solo verso l&apos;API di questo sito (<code>/api/transmute</code>) · la cronologia vive in{' '}
+        <code>localStorage</code>.
       </p>
     </footer>
   )

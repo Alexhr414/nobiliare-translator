@@ -11,4 +11,13 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  server: {
+    // `npm run dev` serves only the SPA. To exercise the real LLM path, run
+    // `npm run dev:api` in a second terminal; it hosts the Pages Function on
+    // :8788 and this proxy forwards /api/* to it. Without it the client shows
+    // the "API failed, demo mode" banner and uses the offline engine.
+    proxy: {
+      '/api': { target: process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:8788', changeOrigin: false },
+    },
+  },
 })

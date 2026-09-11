@@ -2,6 +2,14 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "nobiliare-translator",
   "compatibility_date": "2026-09-01",
-  // Cloudflare Pages: static SPA, no Functions. `npm run build` writes to ./dist.
+  // Cloudflare Pages: static SPA built by `npm run build` into ./dist, plus the
+  // Pages Functions in ./functions (POST /api/transmute). Wrangler bundles the
+  // functions automatically on `wrangler pages deploy` / `wrangler pages dev`.
+  //
+  // Secrets are NOT stored here. Set them once per Pages project:
+  //   wrangler pages secret put OPENAI_API_KEY   (required)
+  //   wrangler pages secret put OPENAI_BASE_URL  (optional, default https://api.openai.com/v1)
+  //   wrangler pages secret put OPENAI_MODEL     (optional, default gpt-4o-mini)
+  // Locally, `wrangler pages dev` reads the same names from ./.dev.vars.
   "pages_build_output_dir": "./dist"
 }

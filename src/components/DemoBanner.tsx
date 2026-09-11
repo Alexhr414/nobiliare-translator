@@ -1,26 +1,27 @@
 import { FlaskConical, TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import type { TranslateMode } from '@/engine/translate'
 
 interface DemoBannerProps {
-  llmEnabled: boolean
+  mode: TranslateMode
   fallbackReason: string | null
   onDismissFallback: () => void
 }
 
-export function DemoBanner({ llmEnabled, fallbackReason, onDismissFallback }: DemoBannerProps) {
-  if (llmEnabled && !fallbackReason) return null
+export function DemoBanner({ mode, fallbackReason, onDismissFallback }: DemoBannerProps) {
+  if (mode === 'api' && !fallbackReason) return null
 
   if (fallbackReason) {
     return (
       <div
-        role="status"
+        role="alert"
         className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/8 px-4 py-3 text-sm text-ink"
       >
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
         <div className="flex-1 space-y-1">
           <p className="font-medium">
-            Il modello linguistico non ha risposto: risultato prodotto dal motore dimostrativo.
-            <span className="font-cjk text-ink-soft"> · 语言模型未响应，已改用演示引擎。</span>
+            L&apos;API di trasmutazione non ha risposto: questo risultato viene dal motore dimostrativo offline.
+            <span className="font-cjk text-destructive"> · API 失败，演示模式</span>
           </p>
           <p className="text-ink-soft font-mono text-xs break-all">{fallbackReason}</p>
         </div>
@@ -44,8 +45,9 @@ export function DemoBanner({ llmEnabled, fallbackReason, onDismissFallback }: De
         </p>
         <p className="font-cjk text-ink-soft">演示模式：所有转化均由离线模板引擎生成，不调用任何外部服务。</p>
         <p className="text-ink-soft text-xs">
-          Per attivare un LLM compatibile OpenAI imposta <code className="rounded bg-ink/8 px-1 py-0.5">VITE_OPENAI_API_KEY</code>{' '}
-          al momento della build (vedi README).
+          Questa build è stata creata con <code className="rounded bg-ink/8 px-1 py-0.5">VITE_TRANSLATE_MODE=demo</code>. In
+          produzione le frasi passano dall&apos;API <code className="rounded bg-ink/8 px-1 py-0.5">/api/transmute</code>, che
+          usa la chiave impostata come secret di Cloudflare Pages (vedi README).
         </p>
       </div>
     </div>
