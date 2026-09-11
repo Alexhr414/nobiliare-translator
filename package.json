@@ -6,6 +6,7 @@
   "description": "Nobiliare-Aulico Translator — converts any phrase into the Rancido Stilnterra noble register, in Italian and Chinese, across three levels of courtly refinement.",
   "scripts": {
     "dev": "vite",
+    "dev:cf": "npm run build && wrangler pages dev",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "typecheck": "tsc -b",
@@ -23,6 +24,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260911.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.3.0",

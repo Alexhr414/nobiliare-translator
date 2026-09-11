@@ -2,6 +2,11 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "nobiliare-translator",
   "compatibility_date": "2026-09-01",
-  // Cloudflare Pages: static SPA, no Functions. `npm run build` writes to ./dist.
-  "pages_build_output_dir": "./dist"
+  // Cloudflare Pages: the Vite SPA is served from ./dist and the Pages Functions
+  // in ./functions (POST /api/transmute → MiniMax) are bundled automatically.
+  "pages_build_output_dir": "./dist",
+  // Server-side secrets, never shipped to the browser. Set them with
+  //   wrangler pages secret put MINIMAX_API_KEY --project-name nobiliare-translator
+  // and optionally MINIMAX_BASE_URL / MINIMAX_MODEL. Locally, put them in .dev.vars.
+  "vars": {}
 }
