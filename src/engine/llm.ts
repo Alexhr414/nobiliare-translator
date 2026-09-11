@@ -1,33 +1,39 @@
 /**
- * Server-side LLM client. This module runs inside the Cloudflare Pages Function
- * (`functions/api/transmute.ts`) and in Node tests; it must never be imported by
- * browser code, because the API key lives only in Cloudflare secrets.
+ * MiniMax client shared by the Cloudflare Pages Function (`functions/api/transmute.ts`)
+ * and the test-suite. It never runs in the browser: the API key lives server-side only.
+ *
+ * MiniMax exposes an OpenAI-compatible Chat Completions endpoint at
+ * `https://api.minimax.io/v1/chat/completions` (international; mainland China uses
+ * `https://api.minimaxi.com/v1`). Current chat model ids are `MiniMax-M3`,
+ * `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.5`, … — all reasoning models.
  */
+
 import { GLOSSARY } from './lexicon.ts'
 import { INTENT_META, detectIntent } from './intents.ts'
 import { hashString } from './demo.ts'
-import { extractJson, parseLevels } from './schema.ts'
-import type { LlmConfig, Translation } from './types.ts'
+import { LEVELS, type Level, type LlmConfig, type Rendering, type Translation } from './types.ts'
 
-export const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
-export const DEFAULT_MODEL = 'gpt-4o-mini'
-export const TIMEOUT_MS = 30_000
+export const DEFAULT_BASE_URL = 'https://api.minimax.io/v1'
+export const DEFAULT_MODEL = 'MiniMax-M3'
+const TIMEOUT_MS = 45_000
+// The answer is ~150 tokens of JSON, but M2.x models cannot switch thinking off and
+// the reasoning counts against this budget, so leave ample headroom.
+const MAX_COMPLETION_TOKENS = 4096
 
-/** Environment bindings the Pages Function reads (Cloudflare secrets / vars). */
 export interface LlmEnv {
-  OPENAI_API_KEY?: string
-  OPENAI_BASE_URL?: string
-  OPENAI_MODEL?: string
+  MINIMAX_API_KEY?: string
+  MINIMAX_BASE_URL?: string
+  MINIMAX_MODEL?: string
 }
 
-/** Reads the LLM configuration from server-side env; `null` means no key is set. */
-export function readLlmConfig(env: LlmEnv): LlmConfig | null {
-  const apiKey = env.OPENAI_API_KEY?.trim()
+/** Builds the client configuration from server-side env bindings; `null` when no key is set. */
+export function resolveLlmConfig(env: LlmEnv): LlmConfig | null {
+  const apiKey = env.MINIMAX_API_KEY?.trim()
   if (!apiKey) return null
   return {
     apiKey,
-    baseUrl: (env.OPENAI_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-    model: env.OPENAI_MODEL?.trim() || DEFAULT_MODEL,
+    baseUrl: (env.MINIMAX_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    model: env.MINIMAX_MODEL?.trim() || DEFAULT_MODEL,
   }
 }
 
@@ -53,63 +59,60 @@ Frase: «Mi stai disturbando.»
 Frase: «Domani piove.»
 {"diretta":{"it":"Domani viene giù acqua, mettitelo in testa.","zh":"明天要下雨，记住了。"},"standard":{"it":"Il dì venturo il cielo verserà pioggia sulla magione; la Sua augusta persona vorrà disporsi di conseguenza.","zh":"来日天将降雨于府邸；愿尊贵之躯预作安排。"},"spietata":{"it":"Il dì venturo pioverà, e per una volta l'umidità che grava su questa magione non sarà colpa della Sua conversazione.","zh":"来日将有雨；这一次，笼罩府邸的潮湿终于不是阁下谈吐之过。"}}
 
-Rispondi SOLO con JSON valido, senza testo attorno, esattamente nel formato:
+Rispondi SOLO con JSON valido, senza testo attorno, senza blocchi di codice, esattamente nel formato:
 {"diretta":{"it":"...","zh":"..."},"standard":{"it":"...","zh":"..."},"spietata":{"it":"...","zh":"..."}}`
 
+export function buildUserPrompt(input: string, variant: number): string {
+  return variant > 0
+    ? `Frase da trasmutare (proponi una variante diversa dalle precedenti, tentativo ${variant + 1}):\n${input}`
+    : `Frase da trasmutare:\n${input}`
+}
+
 interface ChatCompletion {
-  choices?: { message?: { content?: string | null } }[]
+  choices?: { message?: { content?: string | null }; finish_reason?: string }[]
+  base_resp?: { status_code?: number; status_msg?: string }
+  error?: { message?: string; type?: string }
 }
 
-/** Body of the OpenAI-compatible `chat/completions` request for a phrase. */
-export function buildChatRequest(input: string, model: string, variant: number) {
-  return {
-    model,
-    temperature: variant === 0 ? 0.8 : 1.0,
-    response_format: { type: 'json_object' as const },
-    messages: [
-      { role: 'system' as const, content: SYSTEM_PROMPT },
-      {
-        role: 'user' as const,
-        content:
-          variant > 0
-            ? `Frase da trasmutare (proponi una variante diversa dalle precedenti, tentativo ${variant + 1}):\n${input}`
-            : `Frase da trasmutare:\n${input}`,
-      },
-    ],
+/** Removes reasoning blocks that MiniMax M-series models may inline in `content`. */
+export function stripThinking(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^[\s\S]*?<\/think>/i, '')
+    .trim()
+}
+
+export function extractJson(text: string): unknown {
+  const cleaned = stripThinking(text)
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim()
+  try {
+    return JSON.parse(cleaned)
+  } catch {
+    const start = cleaned.indexOf('{')
+    const end = cleaned.lastIndexOf('}')
+    if (start === -1 || end <= start) throw new Error('Model response contained no JSON object')
+    return JSON.parse(cleaned.slice(start, end + 1))
   }
 }
 
-export interface CompletionMeta {
-  input: string
-  model: string
-  variant: number
-  now: number
+function isRendering(value: unknown): value is Rendering {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return typeof v.it === 'string' && v.it.trim() !== '' && typeof v.zh === 'string' && v.zh.trim() !== ''
 }
 
-/** Turns the raw completion text into the `Translation` the UI renders. */
-export function completionToTranslation(content: string, meta: CompletionMeta): Translation {
-  const intent = detectIntent(meta.input)
-  return {
-    id: `${meta.now.toString(36)}-${hashString(meta.input + meta.variant).toString(36)}`,
-    input: meta.input,
-    intent,
-    intentLabel: INTENT_META[intent].label,
-    levels: parseLevels(extractJson(content)),
-    source: 'llm',
-    model: meta.model,
-    variant: meta.variant,
-    createdAt: meta.now,
+export function parseLevels(payload: unknown): Record<Level, Rendering> {
+  if (typeof payload !== 'object' || payload === null) throw new Error('Model response is not an object')
+  const obj = payload as Record<string, unknown>
+  const out = {} as Record<Level, Rendering>
+  for (const level of LEVELS) {
+    const r = obj[level]
+    if (!isRendering(r)) throw new Error(`Model response is missing level "${level}"`)
+    out[level] = { it: r.it.trim(), zh: r.zh.trim() }
   }
-}
-
-/** Raised when the upstream model API answers with a non-2xx status. */
-export class UpstreamError extends Error {
-  readonly status: number
-  constructor(status: number, detail: string) {
-    super(`LLM request failed (${status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
-    this.name = 'UpstreamError'
-    this.status = status
-  }
+  return out
 }
 
 export interface LlmOptions {
@@ -117,7 +120,6 @@ export interface LlmOptions {
   signal?: AbortSignal
   fetchImpl?: typeof fetch
   now?: number
-  timeoutMs?: number
 }
 
 export async function llmTranslate(input: string, config: LlmConfig, options: LlmOptions = {}): Promise<Translation> {
@@ -127,7 +129,7 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
   const doFetch = options.fetchImpl ?? fetch
 
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error('LLM request timed out')), options.timeoutMs ?? TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(new Error('MiniMax request timed out')), TIMEOUT_MS)
   options.signal?.addEventListener('abort', () => controller.abort(options.signal?.reason), { once: true })
 
   try {
@@ -138,19 +140,48 @@ export async function llmTranslate(input: string, config: LlmConfig, options: Ll
         Authorization: `Bearer ${config.apiKey}`,
       },
       signal: controller.signal,
-      body: JSON.stringify(buildChatRequest(trimmed, config.model, variant)),
+      body: JSON.stringify({
+        model: config.model,
+        temperature: variant === 0 ? 0.8 : 1.0,
+        max_completion_tokens: MAX_COMPLETION_TOKENS,
+        // Honoured by MiniMax-M3 (answers directly); M2.x models keep thinking on.
+        thinking: { type: 'disabled' },
+        // Keeps any reasoning out of `content` so the JSON answer is clean.
+        reasoning_split: true,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: buildUserPrompt(trimmed, variant) },
+        ],
+      }),
     })
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new UpstreamError(res.status, detail)
+      throw new Error(`MiniMax request failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
     }
 
     const data = (await res.json()) as ChatCompletion
-    const content = data.choices?.[0]?.message?.content
-    if (!content) throw new Error('LLM returned an empty completion')
+    // MiniMax reports auth/quota/parameter errors with HTTP 200 and a non-zero base_resp.
+    if (data.base_resp && data.base_resp.status_code && data.base_resp.status_code !== 0) {
+      throw new Error(`MiniMax error ${data.base_resp.status_code}: ${data.base_resp.status_msg ?? 'unknown'}`)
+    }
+    if (data.error?.message) throw new Error(`MiniMax error: ${data.error.message}`)
 
-    return completionToTranslation(content, { input: trimmed, model: config.model, variant, now })
+    const content = data.choices?.[0]?.message?.content
+    if (!content || !stripThinking(content)) throw new Error('MiniMax returned an empty completion')
+
+    const intent = detectIntent(trimmed)
+    return {
+      id: `${now.toString(36)}-${hashString(trimmed + variant).toString(36)}`,
+      input: trimmed,
+      intent,
+      intentLabel: INTENT_META[intent].label,
+      levels: parseLevels(extractJson(content)),
+      source: 'llm',
+      model: config.model,
+      variant,
+      createdAt: now,
+    }
   } finally {
     clearTimeout(timer)
   }

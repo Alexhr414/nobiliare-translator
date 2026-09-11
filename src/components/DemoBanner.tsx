@@ -1,17 +1,25 @@
-import { FlaskConical, TriangleAlert, X } from 'lucide-react'
+import { FlaskConical, KeyRound, TriangleAlert, X } from 'lucide-react'
+import type { LlmStatus } from '@/engine/api'
+import type { Fallback } from '@/engine/translate'
 import { Button } from '@/components/ui/button'
-import type { TranslateMode } from '@/engine/translate'
 
 interface DemoBannerProps {
-  mode: TranslateMode
-  fallbackReason: string | null
+  /** `null` while the status probe is still in flight. */
+  status: LlmStatus | null
+  fallback: Fallback | null
   onDismissFallback: () => void
 }
 
-export function DemoBanner({ mode, fallbackReason, onDismissFallback }: DemoBannerProps) {
-  if (mode === 'api' && !fallbackReason) return null
+const SECRET_HINT = (
+  <>
+    Per attivare MiniMax imposta il segreto{' '}
+    <code className="rounded bg-ink/8 px-1 py-0.5">wrangler pages secret put MINIMAX_API_KEY</code> sul progetto Cloudflare
+    Pages e ridistribuisci (vedi README).
+  </>
+)
 
-  if (fallbackReason) {
+export function DemoBanner({ status, fallback, onDismissFallback }: DemoBannerProps) {
+  if (fallback?.kind === 'failed') {
     return (
       <div
         role="alert"
@@ -20,10 +28,11 @@ export function DemoBanner({ mode, fallbackReason, onDismissFallback }: DemoBann
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
         <div className="flex-1 space-y-1">
           <p className="font-medium">
-            L&apos;API di trasmutazione non ha risposto: questo risultato viene dal motore dimostrativo offline.
-            <span className="font-cjk text-destructive"> · API 失败，演示模式</span>
+            MiniMax non ha risposto: il risultato qui sotto proviene dal motore dimostrativo offline.
+            <span className="font-cjk text-ink-soft"> · MiniMax 未响应，以下结果由离线演示引擎生成。</span>
           </p>
-          <p className="text-ink-soft font-mono text-xs break-all">{fallbackReason}</p>
+          <p className="text-ink-soft font-mono text-xs break-all">{fallback.message}</p>
+          <p className="text-ink-soft text-xs">Riprova con «Trasmuta» o «Rigenera» per interrogare di nuovo il modello.</p>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={onDismissFallback} aria-label="Chiudi avviso">
           <X />
@@ -31,6 +40,29 @@ export function DemoBanner({ mode, fallbackReason, onDismissFallback }: DemoBann
       </div>
     )
   }
+
+  if (fallback?.kind === 'unconfigured') {
+    return (
+      <div
+        role="status"
+        className="flex items-start gap-3 rounded-lg border border-gold/50 bg-gold-soft/30 px-4 py-3 text-sm text-ink"
+      >
+        <KeyRound className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
+        <div className="flex-1 space-y-1">
+          <p className="font-medium">
+            Chiave MiniMax assente sul server: il risultato proviene dal motore dimostrativo offline.
+            <span className="font-cjk text-ink-soft"> · 服务器未配置 MiniMax 密钥，以下结果由离线演示引擎生成。</span>
+          </p>
+          <p className="text-ink-soft text-xs">{SECRET_HINT}</p>
+        </div>
+        <Button variant="ghost" size="icon-sm" onClick={onDismissFallback} aria-label="Chiudi avviso">
+          <X />
+        </Button>
+      </div>
+    )
+  }
+
+  if (status === null || status.configured) return null
 
   return (
     <div
@@ -40,15 +72,11 @@ export function DemoBanner({ mode, fallbackReason, onDismissFallback }: DemoBann
       <FlaskConical className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
       <div className="space-y-0.5">
         <p className="font-medium">
-          Modalità dimostrativa: le trasmutazioni sono generate offline da un motore a modelli, senza alcun servizio
-          esterno.
+          Modalità dimostrativa: il modello MiniMax non è configurato, le trasmutazioni sono generate offline da un
+          motore a modelli.
         </p>
-        <p className="font-cjk text-ink-soft">演示模式：所有转化均由离线模板引擎生成，不调用任何外部服务。</p>
-        <p className="text-ink-soft text-xs">
-          Questa build è stata creata con <code className="rounded bg-ink/8 px-1 py-0.5">VITE_TRANSLATE_MODE=demo</code>. In
-          produzione le frasi passano dall&apos;API <code className="rounded bg-ink/8 px-1 py-0.5">/api/transmute</code>, che
-          usa la chiave impostata come secret di Cloudflare Pages (vedi README).
-        </p>
+        <p className="font-cjk text-ink-soft">演示模式：尚未配置 MiniMax 模型，所有转化均由离线模板引擎生成。</p>
+        <p className="text-ink-soft text-xs">{SECRET_HINT}</p>
       </div>
     </div>
   )

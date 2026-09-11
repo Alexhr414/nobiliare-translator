@@ -6,8 +6,7 @@
   "description": "Nobiliare-Aulico Translator — converts any phrase into the Rancido Stilnterra noble register, in Italian and Chinese, across three levels of courtly refinement.",
   "scripts": {
     "dev": "vite",
-    "dev:api": "wrangler pages dev --port 8788",
-    "dev:cf": "npm run build && wrangler pages dev --port 8788",
+    "dev:cf": "npm run build && wrangler pages dev",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "typecheck": "tsc -b",

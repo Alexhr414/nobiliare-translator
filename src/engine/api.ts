@@ -1,75 +1,50 @@
-/**
- * Browser client for the same-origin `/api/transmute` Pages Function. No API
- * key is involved here: the server holds it.
- */
-import { parseTranslation } from './schema.ts'
+/** Wire contract between the SPA and the Pages Function at `POST /api/transmute`. */
+
 import type { Translation } from './types.ts'
 
-export const TRANSMUTE_ENDPOINT = '/api/transmute'
-/** A little longer than the server's own upstream timeout so its error wins. */
-export const CLIENT_TIMEOUT_MS = 40_000
+export const API_ENDPOINT = '/api/transmute'
+export const MAX_INPUT_LENGTH = 600
+export const MAX_VARIANT = 50
 
-export class ApiError extends Error {
-  readonly status: number
-  readonly code: string
-  constructor(status: number, code: string, message: string) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
-    this.code = code
-  }
-}
-
-export interface ApiTranslateOptions {
+export interface TransmuteRequest {
+  input: string
   variant?: number
-  signal?: AbortSignal
-  fetchImpl?: typeof fetch
-  endpoint?: string
-  timeoutMs?: number
 }
 
-export async function apiTranslate(input: string, options: ApiTranslateOptions = {}): Promise<Translation> {
-  const doFetch = options.fetchImpl ?? fetch
-  const controller = new AbortController()
-  const timer = setTimeout(
-    () => controller.abort(new ApiError(0, 'client_timeout', 'Nessuna risposta dal server entro il tempo massimo')),
-    options.timeoutMs ?? CLIENT_TIMEOUT_MS,
+/** Successful responses are the same `Translation` object the UI renders. */
+export type TransmuteResponse = Translation
+
+export type ApiErrorCode = 'invalid_request' | 'llm_unconfigured' | 'llm_failed'
+
+export interface ApiError {
+  error: ApiErrorCode
+  message: string
+}
+
+/** `GET /api/transmute` — lets the UI say whether the live model is wired up, without exposing the key. */
+export interface LlmStatus {
+  provider: 'minimax'
+  configured: boolean
+  model: string | null
+}
+
+export function isApiError(value: unknown): value is ApiError {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return typeof v.error === 'string' && typeof v.message === 'string'
+}
+
+export function isTranslation(value: unknown): value is Translation {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.id === 'string' &&
+    typeof v.input === 'string' &&
+    typeof v.intent === 'string' &&
+    typeof v.levels === 'object' &&
+    v.levels !== null &&
+    (v.source === 'llm' || v.source === 'demo') &&
+    typeof v.variant === 'number' &&
+    typeof v.createdAt === 'number'
   )
-  options.signal?.addEventListener('abort', () => controller.abort(options.signal?.reason), { once: true })
-
-  try {
-    let res: Response
-    try {
-      res = await doFetch(options.endpoint ?? TRANSMUTE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({ input: input.trim(), variant: options.variant ?? 0 }),
-      })
-    } catch (error) {
-      if (controller.signal.aborted) throw controller.signal.reason ?? error
-      throw new ApiError(0, 'network_error', error instanceof Error ? error.message : String(error))
-    }
-
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: unknown; message?: unknown } | null
-      const code = typeof body?.error === 'string' ? body.error : 'http_error'
-      const message = typeof body?.message === 'string' ? body.message : `HTTP ${res.status}`
-      throw new ApiError(res.status, code, message)
-    }
-
-    let data: unknown
-    try {
-      data = await res.json()
-    } catch {
-      throw new ApiError(res.status, 'bad_response', 'The server returned a non-JSON answer')
-    }
-    try {
-      return parseTranslation(data)
-    } catch (error) {
-      throw new ApiError(res.status, 'bad_response', error instanceof Error ? error.message : String(error))
-    }
-  } finally {
-    clearTimeout(timer)
-  }
 }

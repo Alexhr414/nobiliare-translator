@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { translate, translateMode } from '@/engine/translate'
+import type { LlmStatus } from '@/engine/api'
+import { fetchLlmStatus, translate, type Fallback } from '@/engine/translate'
 import type { Translation } from '@/engine/types'
 import { DemoBanner } from '@/components/DemoBanner'
 import { Footer } from '@/components/Footer'
@@ -14,12 +15,24 @@ export default function App() {
   const [input, setInput] = useState('')
   const [current, setCurrent] = useState<Translation | null>(null)
   const [busy, setBusy] = useState(false)
-  const [fallbackReason, setFallbackReason] = useState<string | null>(null)
+  const [fallback, setFallback] = useState<Fallback | null>(null)
+  // `null` while the probe is in flight, so the header can show "checking" instead of a wrong badge.
+  const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null)
   const history = useHistory()
   const { add: addToHistory } = history
   const inflight = useRef<AbortController | null>(null)
 
   useEffect(() => () => inflight.current?.abort(), [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchLlmStatus({ signal: controller.signal })
+      .then((status) => {
+        if (!controller.signal.aborted) setLlmStatus(status)
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
 
   const run = useCallback(
     async (text: string, variant: number) => {
@@ -29,19 +42,25 @@ export default function App() {
       const controller = new AbortController()
       inflight.current = controller
       setBusy(true)
-      setFallbackReason(null)
+      setFallback(null)
       try {
-        const { translation, fallbackReason: reason } = await translate(phrase, {
+        const { translation, fallback: reason } = await translate(phrase, {
           variant,
           signal: controller.signal,
         })
         if (controller.signal.aborted) return
         setCurrent(translation)
-        setFallbackReason(reason ?? null)
+        setFallback(reason ?? null)
+        // A live answer means the key is wired up even if the probe had said otherwise.
+        if (translation.source === 'llm') {
+          setLlmStatus({ provider: 'minimax', configured: true, model: translation.model ?? null })
+        } else if (reason?.kind === 'unconfigured') {
+          setLlmStatus({ provider: 'minimax', configured: false, model: null })
+        }
         addToHistory(translation)
       } catch (error) {
         if (controller.signal.aborted) return
-        setFallbackReason(error instanceof Error ? error.message : String(error))
+        setFallback({ kind: 'failed', message: error instanceof Error ? error.message : String(error) })
       } finally {
         if (inflight.current === controller) {
           inflight.current = null
@@ -70,21 +89,21 @@ export default function App() {
     setBusy(false)
     setInput('')
     setCurrent(null)
-    setFallbackReason(null)
+    setFallback(null)
   }, [])
 
   const onSelectHistory = useCallback((t: Translation) => {
     setInput(t.input)
     setCurrent(t)
-    setFallbackReason(null)
+    setFallback(null)
   }, [])
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-4 sm:px-6">
-      <Header mode={translateMode} model={current?.source === 'llm' ? current.model : undefined} />
+      <Header status={llmStatus} />
 
       <main className="flex flex-1 flex-col gap-6 pb-10">
-        <DemoBanner mode={translateMode} fallbackReason={fallbackReason} onDismissFallback={() => setFallbackReason(null)} />
+        <DemoBanner status={llmStatus} fallback={fallback} onDismissFallback={() => setFallback(null)} />
 
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <InputPanel
