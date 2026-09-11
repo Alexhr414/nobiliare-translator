@@ -1,8 +1,10 @@
 /**
  * The Rancido Stilnterra noble lexicon.
  *
- * `GLOSSARY` is shown to the user; `SUBSTITUTIONS` is applied to the original
- * phrase to produce an "ennobled" echo of the user's own words.
+ * `GLOSSARY` is shown to the user. `SUBSTITUTIONS` and `COLLOQUIAL` are applied
+ * only to the topic slot of content-carrying intents (requests, orders,
+ * questions, statements…) so that the thing being asked or stated is rendered
+ * in the right register; every other intent is a full hand-written paraphrase.
  */
 
 export interface GlossaryEntry {
@@ -75,17 +77,17 @@ const sub = (words: string, replacement: string): Substitution => ({
 })
 
 /**
- * Word-level substitutions, applied to the user's phrase to build `{origIt}`.
+ * Word-level substitutions, applied to the topic slot to build `{noble}`.
  * Ordered from most specific (multi-word) to least specific.
  */
 export const SUBSTITUTIONS: readonly Substitution[] = [
-  sub('vai via|vattene|sparisci|levati', 'incedi altrove'),
+  sub('vai via|vattene|sparisci|levati', 'inceda altrove'),
   sub('ho fame', "avverto l'appetito"),
   sub('ho sonno|sono stanco|sono stanca', 'le mie membra reclamano riposo'),
-  sub('ti amo', 'nutro per la Vostra augusta persona un sentimento celestiale'),
-  sub('mi piaci', 'la Vostra persona mi è celestialmente grata'),
+  sub('ti amo', 'nutro per la Sua augusta persona un sentimento celestiale'),
+  sub('mi piaci', 'la Sua persona mi è celestialmente grata'),
   sub('non voglio', 'non nutro velleità alcuna di'),
-  sub('per favore|per piacere|ti prego', 'se la Vostra augusta persona lo consente'),
+  sub('per favore|per piacere|ti prego', 'se la Sua augusta persona lo consente'),
   sub('va bene|ok|okay|d\'accordo', 'sia come da protocollo'),
   sub('subito|adesso|ora|immediatamente', "nell'istante presente"),
   sub('domani', 'il dì venturo'),
@@ -94,9 +96,9 @@ export const SUBSTITUTIONS: readonly Substitution[] = [
   sub('casa|appartamento|baracca', 'magione'),
   sub('andare|camminare', 'incedere'),
   sub('vado', 'incedo'),
-  sub('vai', 'incedete'),
+  sub('vai', 'inceda'),
   sub('andiamo', 'incediamo'),
-  sub('vieni', 'degnatevi di incedere qui'),
+  sub('vieni', 'si degni di incedere qui'),
   sub('danno|danni|guaio|guai|casino', 'nocumento'),
   sub('stupidità|stupidaggine|stupidaggini|cretinata|cazzata|sciocchezza', "vacuità d'ingegno"),
   sub('stupido|stupida|idiota|cretino|cretina|scemo|scema|imbecille|deficiente|coglione', 'coatto di vacuità d\'ingegno'),
@@ -119,7 +121,7 @@ export const SUBSTITUTIONS: readonly Substitution[] = [
   sub('brutto|brutta|orrendo|orrenda|schifoso|schifosa', 'sgraziato'),
   sub('grazie', 'la mia gratitudine'),
   sub('ciao|ehi|hey', 'salve'),
-  sub('tu|te', 'la Vostra persona'),
+  sub('tu|te', 'la Sua persona'),
   sub('lei|lui', "l'augusta persona"),
   sub('gente|persone|tipi', 'astanti'),
   sub('cosa|roba', 'faccenda'),
@@ -139,15 +141,41 @@ export const SUBSTITUTIONS: readonly Substitution[] = [
   sub('sbrigati|muoviti|forza|dai', 'siate solerte'),
 ]
 
+/**
+ * Colloquial substitutions for the Volgare topic slot (`{blunt}`), so the
+ * blunt level does not simply repeat the user's wording.
+ */
+export const COLLOQUIAL: readonly Substitution[] = [
+  sub('per favore|per piacere|per cortesia|ti prego', 'dai'),
+  sub('molto|tanto|assai|parecchio|moltissimo', 'un casino'),
+  sub('velocemente|in fretta|rapidamente|presto', 'alla svelta'),
+  sub('subito|immediatamente', 'al volo'),
+  sub('davvero|veramente', 'sul serio'),
+  sub('problema|guaio|pasticcio', 'casino'),
+  sub('problemi|guai|pasticci', 'casini'),
+  sub('soldi|denaro|quattrini', 'grana'),
+  sub('persona|individuo', 'tipo'),
+  sub('ragazzo', 'tipo'),
+  sub('ragazza', 'tipa'),
+  sub('amico', 'compare'),
+  sub('arrabbiato', 'incazzato'),
+  sub('arrabbiata', 'incazzata'),
+  sub('stanco|esausto|sfinito', 'cotto'),
+  sub('stanca|esausta|sfinita', 'cotta'),
+  sub('mangiare', 'sbafare'),
+  sub('noioso|tedioso', 'palloso'),
+  sub('noiosa|tediosa', 'pallosa'),
+  sub('stupido|sciocco|imbecille', 'scemo'),
+  sub('stupida|sciocca', 'scema'),
+  sub('bello|bellissimo|meraviglioso|fantastico', 'figo'),
+  sub('cosa', 'roba'),
+]
+
 const upperFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
 
-/**
- * Applies the noble lexicon to a phrase. Capitalisation of the first letter of
- * a replaced word is preserved so sentence starts remain tidy.
- */
-export function ennoble(text: string): string {
+function substitute(text: string, table: readonly Substitution[]): string {
   let out = text.trim()
-  for (const { pattern, replacement } of SUBSTITUTIONS) {
+  for (const { pattern, replacement } of table) {
     out = out.replace(pattern, (match) =>
       match.charAt(0) === match.charAt(0).toUpperCase() && match.charAt(0) !== match.charAt(0).toLowerCase()
         ? upperFirst(replacement)
@@ -155,6 +183,19 @@ export function ennoble(text: string): string {
     )
   }
   return out
+}
+
+/**
+ * Applies the noble lexicon to a phrase. Capitalisation of the first letter of
+ * a replaced word is preserved so sentence starts remain tidy.
+ */
+export function ennoble(text: string): string {
+  return substitute(text, SUBSTITUTIONS)
+}
+
+/** Applies the colloquial lexicon to a phrase for the Volgare level. */
+export function vulgarize(text: string): string {
+  return substitute(text, COLLOQUIAL)
 }
 
 /** Strips trailing punctuation so a phrase can be embedded mid-sentence. */

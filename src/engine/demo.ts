@@ -1,7 +1,7 @@
-import { INTENT_META, detectIntent, detectScript } from './intents.ts'
-import { bare, ennoble, lowerFirst } from './lexicon.ts'
+import { INTENT_META, detectIntent, detectScript, parseAddressee, stripCourtesy, stripInterjections } from './intents.ts'
+import { bare, ennoble, lowerFirst, vulgarize } from './lexicon.ts'
 import { TEMPLATES } from './templates.ts'
-import { LEVELS, type Level, type Rendering, type Translation } from './types.ts'
+import { LEVELS, SLOT_INTENTS, type IntentId, type Level, type Rendering, type Translation } from './types.ts'
 
 const upperFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
 
@@ -20,14 +20,96 @@ function tidy(text: string): string {
   return text
     .replace(/([.!?…])\s*\.(?=\s|$)/gu, '$1')
     .replace(/([。！？…])\s*。/gu, '$1')
+    .replace(/\s+([,;:.!?])/gu, '$1')
+    .replace(/,\s*,/gu, ',')
+    .replace(/，\s*，/gu, '，')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
 
-function fill(template: Rendering, vars: Record<string, string>, question: boolean): Rendering {
-  const apply = (s: string) => tidy(s.replace(/\{(\w+)\}/g, (_, key: string) => vars[key] ?? ''))
-  const it = apply(template.it)
-  const zh = apply(template.zh)
+type Vars = Record<string, string>
+
+interface SlotVars {
+  it: Vars
+  zh: Vars
+}
+
+/** The substance of a content-carrying phrase, stripped of courtesy or exclamation markers. */
+function extractTopic(body: string, intent: IntentId): string {
+  const stripped = bare(body)
+  if (intent === 'request' || intent === 'command') return bare(stripCourtesy(stripped))
+  if (intent === 'complaint') return bare(stripInterjections(stripped))
+  return stripped
+}
+
+const EMPTY_COMPLAINT = { blunt: 'ancora questa storia', noble: 'ancora la medesima faccenda', zh: '又是这桩事' }
+const EMPTY_REQUEST = { blunt: 'quella cosa che sai', noble: 'quanto Le è già noto', zh: '您已知晓的那件事' }
+
+/**
+ * Builds the per-language placeholder values. Addressee slots are present for
+ * every intent; topic slots only carry the user's words for SLOT_INTENTS, so a
+ * hand-written paraphrase can never fall back to echoing the input.
+ */
+function buildVars(body: string, addressee: string | null, intent: IntentId): SlotVars {
+  const it: Vars = {
+    Voc: addressee ? `${addressee}, ` : '',
+    voc: addressee ? `, ${addressee}` : '',
+  }
+  const zh: Vars = {
+    Voc: addressee ? `${addressee}，` : '',
+    voc: addressee ? `，${addressee}` : '',
+  }
+
+  if (!SLOT_INTENTS.includes(intent)) return { it, zh }
+
+  const topic = extractTopic(body, intent)
+  if (!topic) {
+    // Nothing but markers was said ("Che palle, di nuovo", "Per favore"), so the
+    // slot carries the implied substance instead of echoing the marker.
+    const fallback = intent === 'complaint' ? EMPTY_COMPLAINT : EMPTY_REQUEST
+    Object.assign(it, {
+      orig: '',
+      q: `«${fallback.blunt}»`,
+      noble: fallback.noble,
+      Noble: upperFirst(fallback.noble),
+      blunt: fallback.blunt,
+      Blunt: upperFirst(fallback.blunt),
+    })
+    Object.assign(zh, { orig: '', q: fallback.zh, noble: fallback.zh, Noble: fallback.zh, blunt: fallback.zh, Blunt: fallback.zh })
+    return { it, zh }
+  }
+
+  const script = detectScript(topic)
+  const cjkQuote = `「${topic}」`
+  const latinQuote = `«${topic}»`
+
+  if (script === 'zh') {
+    // A CJK topic cannot be run through the Italian lexicon, so the Italian
+    // side reports it as a quotation.
+    Object.assign(it, { orig: topic, q: latinQuote, noble: latinQuote, Noble: latinQuote, blunt: latinQuote, Blunt: latinQuote })
+  } else {
+    const noble = ennoble(topic)
+    const blunt = vulgarize(topic)
+    Object.assign(it, {
+      orig: topic,
+      q: latinQuote,
+      noble: lowerFirst(noble),
+      Noble: upperFirst(noble),
+      blunt: lowerFirst(blunt),
+      Blunt: upperFirst(blunt),
+    })
+  }
+  Object.assign(zh, { orig: topic, q: cjkQuote, noble: cjkQuote, Noble: cjkQuote, blunt: cjkQuote, Blunt: cjkQuote })
+  return { it, zh }
+}
+
+function render(template: string, vars: Vars): string {
+  return upperFirst(tidy(template.replace(/\{(\w+)\}/g, (_, key: string) => vars[key] ?? '')))
+}
+
+function fill(template: Rendering, vars: SlotVars, question: boolean): Rendering {
+  const it = render(template.it, vars.it)
+  const zh = render(template.zh, vars.zh)
   if (!question) return { it, zh }
   return {
     it: /[?!.…]$/u.test(it) ? it : `${it}?`,
@@ -44,19 +126,9 @@ export function demoTranslate(input: string, options: DemoOptions = {}): Transla
   const variant = options.variant ?? 0
   const now = options.now ?? Date.now()
   const trimmed = input.trim()
-  const intent = detectIntent(trimmed)
-  const script = detectScript(trimmed)
-
-  const orig = bare(trimmed)
-  // A CJK phrase run through the Italian lexicon would come back unchanged,
-  // so it is echoed verbatim; Latin phrases get the ennobled treatment.
-  const ennobled = script === 'zh' ? orig : ennoble(orig)
-  const vars = {
-    orig,
-    noble: lowerFirst(ennobled),
-    Noble: upperFirst(ennobled),
-    q: `「${orig}」`,
-  }
+  const { addressee, body } = parseAddressee(trimmed)
+  const intent = detectIntent(body)
+  const vars = buildVars(body, addressee, intent)
 
   const seed = hashString(trimmed)
   const set = TEMPLATES[intent]
