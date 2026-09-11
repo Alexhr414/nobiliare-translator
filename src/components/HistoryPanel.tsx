@@ -33,7 +33,7 @@ export function HistoryPanel({ items, activeId, onSelect, onRemove, onClear }: H
           <span className="font-cjk not-italic"> · 尚无记录；最近的转化将保存在浏览器中。</span>
         </p>
       ) : (
-        <ul className="-mx-1 max-h-80 space-y-1 overflow-y-auto pr-1">
+        <ul className="-mx-1 max-h-64 space-y-1 overflow-y-auto pr-1">
           {items.map((t) => {
             const active = t.id === activeId
             return (

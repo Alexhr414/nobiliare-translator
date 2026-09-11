@@ -81,30 +81,38 @@ export function ResultCard({ meta, rendering, copiedKey, onCopy, style }: Result
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3 px-4 sm:px-5">
-        <div className="group relative">
-          <p lang="it" className="font-display drop-cap text-ink pr-16 text-[1.05rem] leading-relaxed sm:text-lg">
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-ink-soft/70 text-[11px] font-medium tracking-[0.18em] uppercase">Italiano</span>
+            <CopyButton
+              copied={copiedKey === keyIt}
+              label={`Copia livello ${meta.ordinal} in italiano`}
+              onClick={() => onCopy(keyIt, rendering.it)}
+              className="-mr-2"
+            />
+          </div>
+          <p lang="it" className="font-display drop-cap text-ink text-[1.05rem] leading-relaxed sm:text-lg">
             {rendering.it}
           </p>
-          <CopyButton
-            copied={copiedKey === keyIt}
-            label={`Copia livello ${meta.ordinal} in italiano`}
-            onClick={() => onCopy(keyIt, rendering.it)}
-            className="absolute -top-1 right-0"
-          />
         </div>
 
         <Separator className="bg-linear-to-r from-transparent via-border to-transparent" />
 
-        <div className="group relative">
-          <p lang="zh-Hans" className="font-cjk text-ink pr-16 text-base leading-loose sm:text-[1.05rem]">
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-ink-soft/70 text-[11px] font-medium tracking-[0.18em] uppercase">
+              中文 <span className="normal-case tracking-normal">· Cinese</span>
+            </span>
+            <CopyButton
+              copied={copiedKey === keyZh}
+              label={`Copia livello ${meta.ordinal} in cinese`}
+              onClick={() => onCopy(keyZh, rendering.zh)}
+              className="-mr-2"
+            />
+          </div>
+          <p lang="zh-Hans" className="font-cjk text-ink text-base leading-loose sm:text-[1.05rem]">
             {rendering.zh}
           </p>
-          <CopyButton
-            copied={copiedKey === keyZh}
-            label={`Copia livello ${meta.ordinal} in cinese`}
-            onClick={() => onCopy(keyZh, rendering.zh)}
-            className="absolute -top-1 right-0"
-          />
         </div>
       </CardContent>
     </Card>

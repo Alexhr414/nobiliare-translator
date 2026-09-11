@@ -90,21 +90,18 @@ export default function App() {
           onDismissFallback={() => setFallbackReason(null)}
         />
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex flex-col gap-6">
-            <InputPanel
-              value={input}
-              onChange={setInput}
-              onSubmit={onSubmit}
-              onRegenerate={onRegenerate}
-              onClear={onClear}
-              busy={busy}
-              canRegenerate={current !== null}
-            />
-            <Results translation={current} busy={busy} />
-          </div>
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <InputPanel
+            value={input}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            onRegenerate={onRegenerate}
+            onClear={onClear}
+            busy={busy}
+            canRegenerate={current !== null}
+          />
 
-          <aside className="flex flex-col gap-6">
+          <aside className="order-last flex flex-col gap-6 lg:order-none">
             <HistoryPanel
               items={history.items}
               activeId={current?.id ?? null}
@@ -114,6 +111,10 @@ export default function App() {
             />
             <Glossary />
           </aside>
+
+          <div className="lg:col-span-2">
+            <Results translation={current} busy={busy} />
+          </div>
         </div>
       </main>
 
