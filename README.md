@@ -3,7 +3,7 @@
 Converts any phrase into the noble register of the house of **Rancido Stilnterra**, in **Italian and Chinese**, across three levels of courtly refinement:
 
 1. **Versione Diretta / Volgare** — the bare meaning, no gloves.
-2. **Versione Nobiliare Standard** — the court register: *Voi*, ceremony, restraint.
+2. **Versione Nobiliare Standard** — the court register: the *Lei* form (*La, Le, Sua*), 阁下 / 尊贵之躯, ceremony, restraint.
 3. **Versione Nobiliare Spietata (Sarcasmo Aulico)** — velvet on the surface, a blade underneath.
 
 The original intent is always preserved: praise stays praise, an insult stays an insult, a question stays a question. The house lexicon runs through every noble rendering — *incedere, magione, augusta persona, nocumento, vacuità d'ingegno, coatto, protocollare, solerte, celestiale, velleità*.
@@ -26,7 +26,7 @@ A single-page app built with **Vite 8 · React 19 · TypeScript · Tailwind CSS 
 
 ### Live mode: MiniMax via a Pages Function (default)
 
-Every phrase is sent to `POST /api/transmute`, a [Cloudflare Pages Function](https://developers.cloudflare.com/pages/functions/) in `functions/api/transmute.ts`. The Function validates the request, calls MiniMax's OpenAI-compatible Chat Completions endpoint with the house system prompt (paraphrase, never echo; three levels; Italian + Chinese; strict JSON), and returns the same `Translation` object the UI renders. The browser bundle contains **no API key and no `VITE_*` secrets**.
+Every phrase is sent to `POST /api/transmute`, a [Cloudflare Pages Function](https://developers.cloudflare.com/pages/functions/) in `functions/api/transmute.ts`. The Function validates the request, calls MiniMax's OpenAI-compatible Chat Completions endpoint with the house system prompt (the no-echo rule — every level is a full paraphrase, never the user's sentence in a noble frame — the three registers, the lexicon and worked examples; strict JSON), and returns the same `Translation` object the UI renders. The browser bundle contains **no API key and no `VITE_*` secrets**.
 
 ```
 POST /api/transmute      { "input": string, "variant"?: number }   → Translation JSON
@@ -61,9 +61,10 @@ Implementation notes: MiniMax M-series models are reasoning models. The Function
 
 Used when `MINIMAX_API_KEY` is not set or the live call fails. No network, no keys. The engine:
 
-1. **Detects the intent** of the phrase (greeting, farewell, gratitude, apology, praise, insult, dismissal, refusal, agreement, request, command, question, complaint, hunger, fatigue, affection, money, lateness, threat, boast, or a generic statement). Italian, English and Chinese trigger words are recognised.
-2. **Ennobles the original wording** with a word-level substitution table (`casa → magione`, `stupido → coatto di vacuità d'ingegno`, `veloce → con solerzia`, …), preserving capitalisation.
-3. **Fills bilingual templates** for the three levels. Each intent has several variants per level; the phrase's hash picks the opening variant and *Rigenera* advances through the rest.
+1. **Splits off the addressee** (`Ale, …`, `老王，…`) so every level can speak to the person by name.
+2. **Detects the intent** of the phrase (greeting, farewell, gratitude, apology, praise, insult, dismissal, disturbance, silence, refusal, agreement, disagreement, request, command, question, complaint, boredom, urgency, hunger, fatigue, affection, money, lateness, delay, threat, boast, or a generic statement). Italian, English and Chinese trigger words are recognised.
+3. **Renders three hand-written paraphrases** in Italian and Chinese. Every level is a complete sentence in its own register — Volgare is blunt street talk, Standard is sincere court prose in the *Lei* form, Spietata is the same prose with the blade underneath — and none of them pastes the user's sentence into a noble shell. Each intent has at least three variants per level; the phrase's hash picks the opening variant and *Rigenera* advances through the rest.
+4. For the few **content-carrying intents** (request, command, question, complaint, money, generic statement) the thing being asked or stated is embedded as a short topic slot, run through a colloquial lexicon for the blunt level and the noble lexicon (`casa → magione`, `domani → il dì venturo`, `stupido → coatto di vacuità d'ingegno`, …) for the noble levels, with courtesy markers ("per favore", "请") and exclamations ("che palle", "又来了") stripped so the template supplies them in the right register.
 
 Engine code lives in `src/engine/` (`intents.ts`, `lexicon.ts`, `templates.ts`, `demo.ts`). The MiniMax client and system prompt shared by the Function and the tests live in `src/engine/llm.ts`; the wire contract in `src/engine/api.ts`.
 

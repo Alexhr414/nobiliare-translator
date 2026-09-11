@@ -42,20 +42,33 @@ export type IntentId =
   | 'praise'
   | 'insult'
   | 'dismissal'
+  | 'disturbance'
+  | 'silence'
   | 'refusal'
   | 'agreement'
+  | 'disagreement'
   | 'request'
   | 'command'
   | 'question'
   | 'complaint'
+  | 'boredom'
+  | 'urgency'
   | 'hunger'
   | 'fatigue'
   | 'affection'
   | 'money'
   | 'lateness'
+  | 'delay'
   | 'threat'
   | 'boast'
   | 'statement'
+
+/**
+ * Intents whose meaning lives in the user's own words (what is asked, ordered,
+ * queried, stated). Their templates may embed a short topic slot; every other
+ * intent is rendered as a complete hand-written paraphrase.
+ */
+export const SLOT_INTENTS: readonly IntentId[] = ['request', 'command', 'question', 'complaint', 'money', 'statement']
 
 export type Source = 'demo' | 'llm'
 

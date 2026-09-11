@@ -62,7 +62,8 @@ describe('resolveLlmConfig', () => {
 
 describe('prompt', () => {
   it('demands paraphrase, never echo, and lists the house lexicon', () => {
-    assert.match(SYSTEM_PROMPT, /PARAFRASI, mai eco/)
+    assert.match(SYSTEM_PROMPT, /PARAFRASI, MAI ECO/i)
+    assert.match(SYSTEM_PROMPT, /senza blocchi di codice/)
     assert.match(SYSTEM_PROMPT, /"diretta"/)
     assert.match(SYSTEM_PROMPT, /"standard"/)
     assert.match(SYSTEM_PROMPT, /"spietata"/)
