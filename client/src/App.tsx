@@ -66,6 +66,7 @@ export default function App() {
   function swap() {
     const next: Lang = to;
     setFrom(next);
+    setText("");
     setResult(null);
   }
 
